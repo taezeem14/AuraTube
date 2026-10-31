@@ -5,12 +5,15 @@ import '../models/song.dart';
 import '../providers/player_provider.dart';
 import '../theme/ember_theme.dart';
 import '../widgets/mini_player.dart';
-import 'tabs/pulsepipe_home_tab.dart';
+import 'tabs/aura_home_tab.dart';
+import 'tabs/aura_explore_tab.dart';
+import 'tabs/aura_mixes_tab.dart';
+import 'tabs/aura_library_tab.dart';
 import 'tabs/pulsepipe_search_tab.dart';
-import 'tabs/pulsepipe_library_tab.dart';
 import 'diagnostics_log_screen.dart';
 
 typedef SineShellScreen = PulsePipeShellScreen;
+typedef AuraShellScreen = PulsePipeShellScreen;
 
 class PulsePipeShellScreen extends StatefulWidget {
   const PulsePipeShellScreen({super.key});
@@ -66,12 +69,23 @@ class _PulsePipeShellScreenState extends State<PulsePipeShellScreen> {
         ),
         action: SnackBarAction(
           label: 'VIEW LOG',
-          textColor: EmberColors.primaryAmber,
+          textColor: EmberColors.primaryBlue,
           onPressed: () {
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const DiagnosticsLogScreen()),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  void _openSearchScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: EmberColors.obsidianBase,
+          body: const SafeArea(child: PulsePipeSearchTab()),
         ),
       ),
     );
@@ -89,16 +103,17 @@ class _PulsePipeShellScreenState extends State<PulsePipeShellScreen> {
       backgroundColor: EmberColors.obsidianBase,
       body: Stack(
         children: [
-          // 1. Tab Views
+          // 1. YouTube 4-Tab Hub
           IndexedStack(
             index: _currentIndex,
             children: [
-              PulsePipeHomeTab(
-                onOpenSearch: () => _onTabTapped(1),
-                onOpenLibrary: () => _onTabTapped(2),
+              AuraHomeTab(
+                onOpenSearch: _openSearchScreen,
+                onOpenLibrary: () => _onTabTapped(3),
               ),
-              const PulsePipeSearchTab(),
-              const PulsePipeLibraryTab(),
+              const AuraExploreTab(),
+              const AuraMixesTab(),
+              const AuraLibraryTab(),
             ],
           ),
 
@@ -113,13 +128,13 @@ class _PulsePipeShellScreenState extends State<PulsePipeShellScreen> {
                 // Floating MiniPlayer docked above nav bar
                 const MiniPlayer(),
 
-                // Sine Bottom Navigation Bar in Electric Blue
+                // Electric Blue YouTube Bottom Navigation Bar
                 Container(
                   decoration: BoxDecoration(
                     color: EmberColors.obsidianBase.withValues(alpha: 0.98),
                     border: Border(
                       top: BorderSide(
-                        color: EmberColors.glassBorder.withValues(alpha: 0.3),
+                        color: Colors.white.withValues(alpha: 0.08),
                         width: 0.8,
                       ),
                     ),
@@ -139,18 +154,25 @@ class _PulsePipeShellScreenState extends State<PulsePipeShellScreen> {
                             onTap: () => _onTabTapped(0),
                           ),
                           _BottomNavItem(
-                            icon: FontAwesomeIcons.magnifyingGlass,
-                            activeIcon: FontAwesomeIcons.magnifyingGlass,
-                            label: 'Search',
+                            icon: FontAwesomeIcons.compass,
+                            activeIcon: FontAwesomeIcons.solidCompass,
+                            label: 'Explore',
                             isSelected: _currentIndex == 1,
                             onTap: () => _onTabTapped(1),
                           ),
                           _BottomNavItem(
-                            icon: FontAwesomeIcons.linesLeaning,
-                            activeIcon: FontAwesomeIcons.linesLeaning,
-                            label: 'Your Library',
+                            icon: FontAwesomeIcons.arrowsSpin,
+                            activeIcon: FontAwesomeIcons.arrowsSpin,
+                            label: 'Mixes',
                             isSelected: _currentIndex == 2,
                             onTap: () => _onTabTapped(2),
+                          ),
+                          _BottomNavItem(
+                            icon: FontAwesomeIcons.bookmark,
+                            activeIcon: FontAwesomeIcons.solidBookmark,
+                            label: 'Library',
+                            isSelected: _currentIndex == 3,
+                            onTap: () => _onTabTapped(3),
                           ),
                         ],
                       ),
@@ -183,7 +205,7 @@ class _BottomNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isSelected ? EmberColors.electricBlue : EmberColors.textSecondary;
+    final color = isSelected ? EmberColors.primaryBlue : EmberColors.textSecondary;
 
     return Expanded(
       child: InkWell(
@@ -195,7 +217,7 @@ class _BottomNavItem extends StatelessWidget {
           children: [
             FaIcon(
               isSelected ? activeIcon : icon,
-              size: 20,
+              size: 19,
               color: color,
             ),
             const SizedBox(height: 4),

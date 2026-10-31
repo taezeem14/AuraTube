@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import '../providers/player_provider.dart';
+import '../services/audio_handler.dart';
 import '../theme/ember_theme.dart';
 
 class SoundShapingSheet extends StatefulWidget {
@@ -25,7 +25,7 @@ class SoundShapingSheet extends StatefulWidget {
 }
 
 class _SoundShapingSheetState extends State<SoundShapingSheet> {
-  Future<AndroidEqualizerParameters>? _parametersFuture;
+  Future<List<EqualizerBandInfo>>? _bandsFuture;
   double? _localBassBoost;
   DateTime _lastBassSent = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -33,7 +33,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
   void initState() {
     super.initState();
     final player = Provider.of<PlayerProvider>(context, listen: false);
-    _parametersFuture = player.audioHandler.equalizer.parameters;
+    _bandsFuture = player.getEqualizerBands();
     _localBassBoost = player.bassBoost;
   }
 
@@ -108,7 +108,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                         onPressed: () {
                           setState(() {
                             _localBassBoost = null;
-                            _parametersFuture = player.audioHandler.equalizer.parameters;
+                            _bandsFuture = player.getEqualizerBands();
                           });
                           player.resetEqualizer();
                         },
@@ -261,7 +261,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                       onSelected: (_) {
                         setState(() {
                           _localBassBoost = null;
-                          _parametersFuture = player.audioHandler.equalizer.parameters;
+                          _bandsFuture = player.getEqualizerBands();
                         });
                         player.setEqualizerPreset(p);
                       },
@@ -306,30 +306,56 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
 
               const SizedBox(height: 16),
               // Multi-Band Frequency Sliders
-              const Text('FREQUENCY BANDS', style: TextStyle(color: EmberColors.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('FREQUENCY BANDS', style: TextStyle(color: EmberColors.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold)),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    decoration: BoxDecoration(
+                      color: EmberColors.primaryBlue.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.3), width: 0.8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FaIcon(
+                          player.isHardwareEqAvailable ? FontAwesomeIcons.bolt : FontAwesomeIcons.shieldHalved,
+                          size: 9,
+                          color: EmberColors.secondaryCyan,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          player.isHardwareEqAvailable ? 'Hardware DSP Engine' : 'Software DSP (Root/ROM Safe)',
+                          style: const TextStyle(color: EmberColors.secondaryCyan, fontSize: 9.5, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 10),
 
-              FutureBuilder<AndroidEqualizerParameters>(
-                future: _parametersFuture,
+              FutureBuilder<List<EqualizerBandInfo>>(
+                future: _bandsFuture,
                 builder: (context, snapshot) {
-                  final params = snapshot.data;
-                  if (params == null || params.bands.isEmpty) {
+                  final bands = snapshot.data;
+                  if (bands == null || bands.isEmpty) {
                     return Container(
                       padding: const EdgeInsets.symmetric(vertical: 20),
                       alignment: Alignment.center,
-                      child: const Text('Hardware equalizer ready on playback', style: TextStyle(color: EmberColors.textMuted, fontSize: 12)),
+                      child: const Text('Calibrating studio equalizer...', style: TextStyle(color: EmberColors.textMuted, fontSize: 12)),
                     );
                   }
 
                   return Column(
                     children: [
-                      for (int i = 0; i < params.bands.length; i++)
+                      for (int i = 0; i < bands.length; i++)
                         _BandSlider(
-                          key: ValueKey('band_$i'),
-                          band: params.bands[i],
-                          minDecibels: params.minDecibels,
-                          maxDecibels: params.maxDecibels,
-                          onChanged: (gain) => player.setBandGain(i, gain),
+                          key: ValueKey('band_${bands[i].index}_${bands[i].gain}'),
+                          band: bands[i],
+                          onChanged: (gain) => player.setBandGain(bands[i].index, gain),
                         ),
                     ],
                   );
@@ -416,16 +442,12 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
 }
 
 class _BandSlider extends StatefulWidget {
-  final AndroidEqualizerBand band;
-  final double minDecibels;
-  final double maxDecibels;
+  final EqualizerBandInfo band;
   final ValueChanged<double> onChanged;
 
   const _BandSlider({
     super.key,
     required this.band,
-    required this.minDecibels,
-    required this.maxDecibels,
     required this.onChanged,
   });
 
@@ -453,13 +475,9 @@ class _BandSliderState extends State<_BandSlider> {
 
   @override
   Widget build(BuildContext context) {
-    double freq = widget.band.centerFrequency;
-    if (freq > 20000) {
-      freq = freq / 1000.0;
-    }
-    final freqStr = freq >= 1000 ? '${(freq / 1000).toStringAsFixed(1)} kHz' : '${freq.round()} Hz';
-    final minDb = widget.minDecibels.isFinite ? widget.minDecibels : -12.0;
-    final maxDb = widget.maxDecibels.isFinite && widget.maxDecibels > minDb ? widget.maxDecibels : 12.0;
+    final freqStr = widget.band.label;
+    final minDb = widget.band.minDecibels;
+    final maxDb = widget.band.maxDecibels;
     final safeGain = _gain.isFinite ? _gain.clamp(minDb, maxDb) : 0.0;
 
     return Padding(

@@ -100,7 +100,7 @@ class DownloadService {
   /// Locate or create appropriate public/accessible media directory cross-platform.
   /// Strictly prioritizes "/storage/emulated/0/Sine-Music" (the root directory where Android & DCIM lie).
   static Future<Directory> _getMediaDirectory({bool isVideo = false}) async {
-    final subFolder = isVideo ? 'Sine-Videos' : 'Sine-Music';
+    final subFolder = isVideo ? 'AuraTube-Videos' : 'AuraTube-Audio';
     if (Platform.isAndroid) {
       // Request permission before attempting filesystem operations
       await requestStoragePermission();

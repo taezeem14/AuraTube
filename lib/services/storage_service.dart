@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
+import '../models/subscription.dart';
 
 class StorageService {
   static const String _favsKey = 'sine_favorites_v1';
@@ -33,6 +34,7 @@ class StorageService {
 
   static const String _searchesKey = 'sine_recent_searches_v1';
   static const String _searchesLegacyKey = 'ember_recent_searches_v1';
+  static const String _subsKey = 'auratube_subscriptions_v1';
 
   final SharedPreferences? _prefs;
   final List<Song> _memFavorites = [];
@@ -40,6 +42,7 @@ class StorageService {
   final List<Playlist> _memPlaylists = [];
   final List<Song> _memDownloads = [];
   final List<String> _memSearches = [];
+  final List<LocalSubscription> _memSubscriptions = [];
   double _memSpeed = 1.0;
 
   static String? _safeJsonEncode(Map<String, dynamic> map) {
@@ -413,5 +416,54 @@ class StorageService {
   Future<void> clearRecentSearches() async {
     _memSearches.clear();
     await _prefs?.remove(_searchesKey);
+  }
+
+  // Local YouTube Channel Subscriptions (NewPipe Architecture)
+  List<LocalSubscription> loadSubscriptions() {
+    if (_prefs == null) {
+      return List<LocalSubscription>.from(_memSubscriptions);
+    }
+    final raw = _prefs.getStringList(_subsKey) ?? [];
+    final list = <LocalSubscription>[];
+    for (final s in raw) {
+      try {
+        final decoded = jsonDecode(s);
+        if (decoded is Map<String, dynamic>) {
+          list.add(LocalSubscription.fromJson(decoded));
+        }
+      } catch (_) {}
+    }
+    _memSubscriptions.clear();
+    _memSubscriptions.addAll(list);
+    return list;
+  }
+
+  Future<void> saveSubscriptions(List<LocalSubscription> subs) async {
+    _memSubscriptions.clear();
+    _memSubscriptions.addAll(subs);
+    if (_prefs == null) return;
+    final encoded = subs.map((s) => jsonEncode(s.toJson())).toList();
+    await _prefs.setStringList(_subsKey, encoded);
+  }
+
+  bool isSubscribed(String channelId) {
+    if (channelId.trim().isEmpty) return false;
+    final list = loadSubscriptions();
+    return list.any((s) => s.channelId == channelId.trim());
+  }
+
+  Future<bool> toggleSubscription(LocalSubscription sub) async {
+    final list = loadSubscriptions();
+    final idx = list.indexWhere((s) => s.channelId == sub.channelId);
+    bool isNowSubscribed = false;
+    if (idx >= 0) {
+      list.removeAt(idx);
+      isNowSubscribed = false;
+    } else {
+      list.insert(0, sub);
+      isNowSubscribed = true;
+    }
+    await saveSubscriptions(list);
+    return isNowSubscribed;
   }
 }

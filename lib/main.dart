@@ -71,6 +71,7 @@ class AuraTubeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider<StorageService>.value(value: storageService),
         ChangeNotifierProvider(
           create: (_) => PlayerProvider(audioHandler, storageService),
         ),

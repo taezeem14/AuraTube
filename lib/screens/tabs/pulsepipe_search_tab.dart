@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../models/song.dart';
 import '../../providers/player_provider.dart';
 import '../../theme/ember_theme.dart';
-import '../track_options_sheet.dart';
+import '../../widgets/aura_video_card.dart';
+import '../aura_video_player_screen.dart';
 
 typedef SineSearchTab = PulsePipeSearchTab;
 
@@ -325,27 +325,20 @@ class _PulsePipeSearchTabState extends State<PulsePipeSearchTab> {
                           ),
                         ),
                         SliverPadding(
-                          padding: const EdgeInsets.only(bottom: 150),
+                          padding: const EdgeInsets.fromLTRB(14, 0, 14, 150),
                           sliver: SliverList(
                             delegate: SliverChildBuilderDelegate(
                               (context, index) {
                                 final song = searchResultsSnapshot[index];
-                                final isCurrent = player.currentSong?.id == song.id;
-
-                                return _SearchResultRow(
-                                  song: song,
-                                  isCurrent: isCurrent,
-                                  isPlaying: isCurrent && player.isPlaying,
+                                return AuraVideoCard(
+                                  video: song,
                                   onTap: () {
-                                    final q = _controller.text.trim();
-                                    player.playCategoryTracks(
-                                      searchResultsSnapshot,
-                                      startIndex: index,
-                                      targetSong: song,
-                                      playingFrom: q.isNotEmpty ? 'Search: "$q"' : 'Search Results',
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => AuraVideoPlayerScreen(video: song),
+                                      ),
                                     );
                                   },
-                                  onOptions: () => TrackOptionsSheet.show(context, song),
                                 );
                               },
                               childCount: searchResultsSnapshot.length,
@@ -473,140 +466,6 @@ class _GenreCard extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SearchResultRow extends StatelessWidget {
-  final Song song;
-  final bool isCurrent;
-  final bool isPlaying;
-  final VoidCallback onTap;
-  final VoidCallback onOptions;
-
-  const _SearchResultRow({
-    required this.song,
-    required this.isCurrent,
-    required this.isPlaying,
-    required this.onTap,
-    required this.onOptions,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      splashColor: EmberColors.electricBlue.withValues(alpha: 0.15),
-      highlightColor: EmberColors.charcoalCard,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            // Artwork
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Stack(
-                children: [
-                  CachedNetworkImage(
-                    imageUrl: song.artworkUrl,
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    placeholder: (_, _) => Container(
-                      width: 48,
-                      height: 48,
-                      color: EmberColors.charcoalCard,
-                      child: const Center(
-                        child: FaIcon(FontAwesomeIcons.music, size: 18, color: EmberColors.textMuted),
-                      ),
-                    ),
-                    errorWidget: (_, _, _) => Container(
-                      width: 48,
-                      height: 48,
-                      color: EmberColors.charcoalCard,
-                      child: const Center(
-                        child: FaIcon(FontAwesomeIcons.music, size: 18, color: EmberColors.textMuted),
-                      ),
-                    ),
-                  ),
-                  if (isCurrent)
-                    Container(
-                      width: 48,
-                      height: 48,
-                      color: Colors.black.withValues(alpha: 0.5),
-                      child: Center(
-                        child: FaIcon(
-                          isPlaying ? FontAwesomeIcons.volumeHigh : FontAwesomeIcons.play,
-                          size: 16,
-                          color: EmberColors.electricBlue,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-
-            // Title & Artist
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    song.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: isCurrent ? EmberColors.electricBlue : EmberColors.textPrimary,
-                      fontSize: 14.5,
-                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00E5FF).withValues(alpha: 0.18),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          'Opus HQ',
-                          style: TextStyle(
-                            color: Color(0xFF00E5FF),
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          song.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: EmberColors.textSecondary,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // Options Button
-            IconButton(
-              icon: const FaIcon(FontAwesomeIcons.ellipsisVertical, size: 15, color: EmberColors.textMuted),
-              onPressed: onOptions,
-            ),
-          ],
         ),
       ),
     );

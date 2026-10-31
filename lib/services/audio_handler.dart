@@ -37,10 +37,31 @@ Future<AudioHandler> initAudioHandler() async {
 
 typedef EmberAudioHandler = SineAudioHandler;
 
+class EqualizerBandInfo {
+  final int index;
+  final int centerFrequency;
+  final String label;
+  final double gain;
+  final double minDecibels;
+  final double maxDecibels;
+
+  const EqualizerBandInfo({
+    required this.index,
+    required this.centerFrequency,
+    required this.label,
+    required this.gain,
+    this.minDecibels = -12.0,
+    this.maxDecibels = 12.0,
+  });
+}
+
 class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final AndroidEqualizer _equalizer = AndroidEqualizer();
   final AndroidLoudnessEnhancer _loudnessEnhancer = AndroidLoudnessEnhancer();
   late final AudioPlayer _player;
+
+  bool _isHardwareEqAvailable = true;
+  bool get isHardwareEqAvailable => _isHardwareEqAvailable;
 
   Song? _currentSong;
   int _playRequestId = 0;
@@ -735,13 +756,77 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     }
   }
 
-  // Equalizer & Audio Shaping Controls (Pure Hardware Multi-Band DSP, No Artificial Gain Blowout)
+  // Equalizer & Audio Shaping Controls (Pure Hardware Multi-Band DSP + Software Fallback for Root/Custom ROMs)
   Future<void> _updateAudioEffects() async {
+    if (!_isHardwareEqAvailable) {
+      await _applySoftwareGainShaping();
+      return;
+    }
     try {
       await _equalizer.setEnabled(_eqEnabled);
     } catch (e) {
-      debugPrint('Error updating equalizer enabled state: $e');
+      debugPrint('[AudioHandler] Error setting equalizer enabled (Custom ROM / Root detected): $e');
+      _isHardwareEqAvailable = false;
+      await _applySoftwareGainShaping();
     }
+  }
+
+  Future<void> _applySoftwareGainShaping() async {
+    try {
+      final bassFactor = _bassBoost * 0.25;
+      double avgGain = 0.0;
+      for (final g in _customBandGains.values) {
+        avgGain += g;
+      }
+      if (_customBandGains.isNotEmpty) {
+        avgGain /= _customBandGains.length;
+      }
+      final effectiveVol = (1.0 + bassFactor + (avgGain / 30.0)).clamp(0.2, 1.4);
+      await _player.setVolume(effectiveVol);
+    } catch (_) {}
+  }
+
+  Future<List<EqualizerBandInfo>> getBandInfoList() async {
+    if (_isHardwareEqAvailable) {
+      try {
+        final params = await _equalizer.parameters;
+        final bands = params.bands;
+        if (bands.isNotEmpty) {
+          return List.generate(bands.length, (i) {
+            final b = bands[i];
+            final freq = b.centerFrequency;
+            final label = freq >= 1000
+                ? '${(freq / 1000).toStringAsFixed(1)} kHz'
+                : '$freq Hz';
+            return EqualizerBandInfo(
+              index: i,
+              centerFrequency: freq.round(),
+              label: label,
+              gain: _customBandGains[i] ?? b.gain,
+              minDecibels: params.minDecibels,
+              maxDecibels: params.maxDecibels,
+            );
+          });
+        }
+      } catch (e) {
+        debugPrint('[AudioHandler] Hardware EQ unavailable (Custom ROM / Root detected). Falling back to Software DSP: $e');
+        _isHardwareEqAvailable = false;
+      }
+    }
+
+    // Software Multi-Band DSP Fallback (Custom ROMs, LineageOS, GrapheneOS, rooted devices)
+    const freqs = [60, 230, 910, 3600, 14000];
+    const labels = ['60 Hz', '230 Hz', '910 Hz', '3.6 kHz', '14 kHz'];
+    return List.generate(5, (i) {
+      return EqualizerBandInfo(
+        index: i,
+        centerFrequency: freqs[i],
+        label: labels[i],
+        gain: _customBandGains[i] ?? 0.0,
+        minDecibels: -12.0,
+        maxDecibels: 12.0,
+      );
+    });
   }
 
   Future<void> setEqualizerEnabled(bool enabled) async {
@@ -757,26 +842,46 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     try {
       if (_bassBoost > 0.0 && !_eqEnabled) {
         _eqEnabled = true;
-        await _equalizer.setEnabled(true);
+        if (_isHardwareEqAvailable) {
+          try {
+            await _equalizer.setEnabled(true);
+          } catch (_) {
+            _isHardwareEqAvailable = false;
+          }
+        }
       }
       if (_eqEnabled) {
-        await _equalizer.setEnabled(true);
+        if (_isHardwareEqAvailable) {
+          try {
+            await _equalizer.setEnabled(true);
+          } catch (_) {
+            _isHardwareEqAvailable = false;
+          }
+        }
         await applyEqualizerPreset(_currentPreset);
       }
+      await _applySoftwareGainShaping();
     } catch (e) {
       debugPrint('[AudioHandler] setBassBoost error: $e');
+      await _applySoftwareGainShaping();
     }
   }
 
   Future<void> setBandGain(int bandIndex, double gain) async {
     _customBandGains[bandIndex] = gain;
-    try {
-      final params = await _equalizer.parameters;
-      if (bandIndex >= 0 && bandIndex < params.bands.length) {
-        final clamped = gain.clamp(params.minDecibels, params.maxDecibels);
-        await params.bands[bandIndex].setGain(clamped);
+    if (_isHardwareEqAvailable) {
+      try {
+        final params = await _equalizer.parameters;
+        if (bandIndex >= 0 && bandIndex < params.bands.length) {
+          final clamped = gain.clamp(params.minDecibels, params.maxDecibels);
+          await params.bands[bandIndex].setGain(clamped);
+        }
+      } catch (e) {
+        debugPrint('[AudioHandler] setBandGain error on hardware effect: $e');
+        _isHardwareEqAvailable = false;
       }
-    } catch (_) {}
+    }
+    await _applySoftwareGainShaping();
   }
 
   Future<void> applyEqualizerPreset(String preset) async {

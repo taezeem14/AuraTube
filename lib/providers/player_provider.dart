@@ -184,6 +184,8 @@ class PlayerProvider extends ChangeNotifier {
   Map<int, double> get bandGains => _bandGains;
   IsolationMode get isolationMode => _isolationMode;
   SineAudioHandler get audioHandler => _audioHandler;
+  bool get isHardwareEqAvailable => _audioHandler.isHardwareEqAvailable;
+  Future<List<EqualizerBandInfo>> getEqualizerBands() => _audioHandler.getBandInfoList();
 
   LyricsResult get lyrics => _lyrics;
   List<LyricLine> get syncedLyrics => _lyrics.syncedLyrics;
@@ -708,6 +710,9 @@ class PlayerProvider extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() => togglePlay();
+  Future<void> pause() => _audioHandler.pause();
+  Future<void> resume() => _audioHandler.play();
+  Future<void> startMixFromSong(Song song) => startRadio(song);
 
   /// Completely halt playback, dismiss active song, and return to no song playing state
   Future<void> stopPlayback() async {

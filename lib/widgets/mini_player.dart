@@ -3,9 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../providers/player_provider.dart';
-import '../screens/now_playing_screen.dart';
+import '../screens/aura_video_player_screen.dart';
 import '../theme/ember_theme.dart';
-import 'vinyl_disc.dart';
+
+typedef AuraMiniPlayer = MiniPlayer;
 
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
@@ -39,7 +40,7 @@ class MiniPlayer extends StatelessWidget {
       onTap: () {
         Navigator.of(context).push(
           PageRouteBuilder(
-            pageBuilder: (context, anim, secAnim) => const NowPlayingScreen(),
+            pageBuilder: (context, anim, secAnim) => AuraVideoPlayerScreen(video: song),
             transitionsBuilder: (context, anim, secAnim, child) {
               const begin = Offset(0.0, 1.0);
               const end = Offset.zero;
@@ -51,17 +52,16 @@ class MiniPlayer extends StatelessWidget {
         );
       },
       child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: EmberColors.surfaceContainerLow.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: EmberColors.outlineVariant.withValues(alpha: 0.6)),
+          border: Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.3)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
+              color: Colors.black.withValues(alpha: 0.5),
               blurRadius: 16,
-              offset: const Offset(0, 6),
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -69,41 +69,49 @@ class MiniPlayer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 2px top progress bar
+            // Electric Blue Progress Indicator
             LinearProgressIndicator(
               value: progress,
-              minHeight: 2,
-              backgroundColor: Colors.white.withValues(alpha: 0.05),
-              valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.primaryAmber),
+              minHeight: 2.5,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.primaryBlue),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Row(
                 children: [
-                  // Vinyl disc with art peek
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      VinylDisc(
-                        size: 42,
-                        isPlaying: player.isPlaying,
+                  // 16:9 Mini Thumbnail with Play Overlay
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 52,
+                      height: 32,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CachedNetworkImage(
+                            imageUrl: song.artworkUrl.isNotEmpty
+                                ? song.artworkUrl
+                                : 'https://i.ytimg.com/vi/${song.id}/hqdefault.jpg',
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(color: EmberColors.surfaceContainer),
+                            errorWidget: (context, url, error) => Container(
+                              color: EmberColors.surfaceContainer,
+                              child: const Center(
+                                child: FaIcon(FontAwesomeIcons.youtube, size: 14, color: EmberColors.primaryBlue),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            color: Colors.black.withValues(alpha: 0.25),
+                          ),
+                        ],
                       ),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(21),
-                        child: song.artworkUrl.isNotEmpty
-                            ? CachedNetworkImage(
-                                imageUrl: song.artworkUrl,
-                                width: 28,
-                                height: 28,
-                                fit: BoxFit.cover,
-                                errorWidget: (_, _, _) => const FaIcon(FontAwesomeIcons.music, size: 14, color: EmberColors.primaryAmber),
-                              )
-                            : const FaIcon(FontAwesomeIcons.music, size: 14, color: EmberColors.primaryAmber),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(width: 12),
-                  // Title and Artist
+                  const SizedBox(width: 10),
+
+                  // Title and Channel Name
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -113,41 +121,40 @@ class MiniPlayer extends StatelessWidget {
                           song.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                color: EmberColors.textPrimary,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          style: const TextStyle(
+                            color: EmberColors.textPrimary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Row(
                           children: [
-                            if (player.isolationMode != IsolationMode.none) ...[
-                              Container(
-                                margin: const EdgeInsets.only(right: 6),
-                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: EmberColors.primaryAmber.withValues(alpha: 0.18),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  player.isolationMode == IsolationMode.instrumentsOnly ? 'KARAOKE' : 'VOCALS',
-                                  style: const TextStyle(
-                                    color: EmberColors.primaryAmber,
-                                    fontSize: 8.5,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 0.5,
-                                  ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: EmberColors.primaryBlue.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'AUDIO MODE',
+                                style: TextStyle(
+                                  color: EmberColors.secondaryCyan,
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ],
-                            Expanded(
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
                               child: Text(
                                 song.artist,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: EmberColors.textMuted,
-                                    ),
+                                style: const TextStyle(
+                                  color: EmberColors.textMuted,
+                                  fontSize: 11,
+                                ),
                               ),
                             ),
                           ],
@@ -155,49 +162,33 @@ class MiniPlayer extends StatelessWidget {
                       ],
                     ),
                   ),
-                  // Favorite Heart
+
+                  // Controls
                   IconButton(
+                    iconSize: 20,
                     icon: FaIcon(
-                      player.isFavorite(song.id) ? FontAwesomeIcons.solidHeart : FontAwesomeIcons.heart,
-                      size: 18,
-                      color: player.isFavorite(song.id) ? EmberColors.primaryAmber : EmberColors.textMuted,
+                      player.isPlaying ? FontAwesomeIcons.pause : FontAwesomeIcons.play,
+                      color: EmberColors.textPrimary,
+                      size: 16,
                     ),
-                    onPressed: () => player.toggleFavorite(song),
-                    splashRadius: 20,
+                    onPressed: () {
+                      if (player.isPlaying) {
+                        player.pause();
+                      } else {
+                        player.resume();
+                      }
+                    },
                   ),
-                  // Circular Play/Pause button
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: EmberColors.primaryAmber,
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: player.isLoadingStream
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(EmberColors.obsidianBase),
-                              ),
-                            )
-                          : FaIcon(
-                              player.isPlaying ? FontAwesomeIcons.pause : FontAwesomeIcons.play,
-                              color: EmberColors.obsidianBase,
-                              size: 16,
-                            ),
-                      onPressed: () => player.togglePlay(),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  // Skip Next
                   IconButton(
-                    icon: const FaIcon(FontAwesomeIcons.forwardStep, size: 18, color: EmberColors.textSecondary),
-                    onPressed: () => player.skipNext(),
-                    splashRadius: 20,
+                    iconSize: 18,
+                    icon: const FaIcon(
+                      FontAwesomeIcons.xmark,
+                      color: EmberColors.textMuted,
+                      size: 15,
+                    ),
+                    onPressed: () {
+                      player.stopPlayback();
+                    },
                   ),
                 ],
               ),
@@ -207,6 +198,4 @@ class MiniPlayer extends StatelessWidget {
       ),
     );
   }
-
 }
-
