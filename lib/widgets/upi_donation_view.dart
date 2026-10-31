@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../theme/aura_theme.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../theme/ember_theme.dart';
 
 class UpiDonationView extends StatefulWidget {
   final ScrollController? scrollController;
@@ -42,226 +43,575 @@ class _UpiDonationViewState extends State<UpiDonationView> {
   String _buildUpiUri({String scheme = 'upi'}) {
     final amount = _currentAmountString;
     final encodedPayee = Uri.encodeComponent(payeeName);
-    final note = Uri.encodeComponent('Donation for AuraTube Development');
+    final note = Uri.encodeComponent('Donation for Sine Music');
     return '$scheme://pay?pa=$upiId&pn=$encodedPayee&tn=$note&am=$amount&cu=INR';
   }
 
-  Future<void> _launchPayment({String scheme = 'upi'}) async {
+  Future<void> _launchPayment({String scheme = 'upi', String? appName}) async {
     final uriString = _buildUpiUri(scheme: scheme);
     final uri = Uri.parse(uriString);
 
     try {
       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched && scheme != 'upi') {
-        final fallbackUri = Uri.parse(_buildUpiUri(scheme: 'upi'));
-        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        // Fallback: try raw upi scheme if a specific app scheme failed
+        if (scheme != 'upi') {
+          final fallbackUri = Uri.parse(_buildUpiUri(scheme: 'upi'));
+          final fallbackLaunched = await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
+          if (fallbackLaunched) return;
+        }
+        _handleLaunchFailure(appName);
       }
     } catch (_) {
-      Clipboard.setData(const ClipboardData(text: upiId));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('UPI intent unavailable. Copied UPI ID (7006616470@fam) to clipboard!'),
-            backgroundColor: AuraColors.surfaceHigh,
-          ),
-        );
-      }
+      _handleLaunchFailure(appName);
     }
+  }
+
+  void _handleLaunchFailure(String? appName) {
+    _copyUpiId();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: EmberColors.surfaceContainerHigh,
+        duration: const Duration(seconds: 4),
+        content: Text(
+          appName != null
+              ? 'Could not open $appName. UPI ID ($upiId) copied to clipboard!'
+              : 'No UPI app responded. UPI ID ($upiId) copied to clipboard!',
+          style: const TextStyle(color: EmberColors.textPrimary, fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  void _copyUpiId() {
+    Clipboard.setData(const ClipboardData(text: upiId));
+    HapticFeedback.lightImpact();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: EmberColors.primaryAmber.withValues(alpha: 0.9),
+        duration: const Duration(seconds: 2),
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: EmberColors.obsidianBase, size: 20),
+            SizedBox(width: 10),
+            Text(
+              'UPI ID ($upiId) copied to clipboard! ✨',
+              style: TextStyle(color: EmberColors.obsidianBase, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&bgcolor=0D1117&color=00D2FF&data=${Uri.encodeComponent('upi://pay?pa=$upiId&pn=$payeeName&tn=Donation%20for%20Sine%20Music&am=$_currentAmountString&cu=INR')}';
+
     return ListView(
       controller: widget.scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       children: [
-        // Header Banner
+        // ==========================================
+        // HERO DONATION BANNER
+        // ==========================================
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                AuraColors.primaryBlue.withValues(alpha: 0.22),
-                AuraColors.surfaceHigh.withValues(alpha: 0.9),
+                EmberColors.primaryAmber.withValues(alpha: 0.22),
+                EmberColors.surfaceContainerHigh.withValues(alpha: 0.85),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AuraColors.primaryBlue.withValues(alpha: 0.5), width: 1.2),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: EmberColors.primaryAmber.withValues(alpha: 0.5),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: EmberColors.primaryAmber.withValues(alpha: 0.12),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AuraColors.primaryBlue,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AuraColors.primaryBlue.withValues(alpha: 0.4),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: EmberColors.primaryAmber,
+                      boxShadow: [
+                        BoxShadow(
+                          color: EmberColors.primaryAmber.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: const Center(
-                  child: FaIcon(FontAwesomeIcons.heart, color: Colors.white, size: 24),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Support AuraTube & Creator',
-                style: TextStyle(
-                  color: AuraColors.textPrimary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'Direct support for Muhammad Taezeem Tariq',
-                style: TextStyle(color: AuraColors.accentCyan, fontSize: 13, fontWeight: FontWeight.w600),
+                    child: const Center(
+                      child: FaIcon(
+                        FontAwesomeIcons.heart,
+                        color: EmberColors.obsidianBase,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Support Sine Development',
+                          style: TextStyle(
+                            color: EmberColors.textPrimary,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'Direct UPI Transfer • 100% Goes to Dev',
+                          style: TextStyle(
+                            color: EmberColors.primaryAmberHi,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 14),
-
-              // UPI ID badge with copy button
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AuraColors.obsidianBase,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AuraColors.outline),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const FaIcon(FontAwesomeIcons.wallet, size: 14, color: AuraColors.accentCyan),
-                    const SizedBox(width: 8),
-                    const Text(
-                      upiId,
-                      style: TextStyle(color: AuraColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () {
-                        Clipboard.setData(const ClipboardData(text: upiId));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('UPI ID copied to clipboard!'),
-                            backgroundColor: AuraColors.surfaceHigh,
-                          ),
-                        );
-                      },
-                      child: const FaIcon(FontAwesomeIcons.copy, size: 14, color: AuraColors.textSecondary),
-                    ),
-                  ],
+              Text(
+                'Sine has zero ads, no subscriptions, and zero tracking. If you enjoy uninterrupted high-fidelity music, consider chipping in to support ongoing server and development costs!',
+                style: TextStyle(
+                  color: EmberColors.textSecondary.withValues(alpha: 0.92),
+                  fontSize: 13,
+                  height: 1.45,
                 ),
               ),
             ],
           ),
         ),
+
+        const SizedBox(height: 18),
+
+        // ==========================================
+        // UPI ID TAP-TO-COPY CARD
+        // ==========================================
+        InkWell(
+          onTap: _copyUpiId,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: EmberColors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: EmberColors.outlineVariant.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: EmberColors.primaryAmber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const FaIcon(
+                    FontAwesomeIcons.qrcode,
+                    color: EmberColors.primaryAmber,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'RECIPIENT UPI ID',
+                        style: TextStyle(
+                          color: EmberColors.textMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        upiId,
+                        style: TextStyle(
+                          color: EmberColors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      Text(
+                        'Muhammad Taezeem Tariq (@fam / FamPay)',
+                        style: TextStyle(
+                          color: EmberColors.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: EmberColors.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: EmberColors.outlineVariant),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.copy_rounded, size: 14, color: EmberColors.primaryAmber),
+                      SizedBox(width: 5),
+                      Text(
+                        'Copy',
+                        style: TextStyle(
+                          color: EmberColors.primaryAmber,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
         const SizedBox(height: 20),
 
-        // Select Amount Chips
+        // ==========================================
+        // SELECT AMOUNT SECTION
+        // ==========================================
         const Text(
-          'Select Contribution Amount (INR)',
-          style: TextStyle(color: AuraColors.textSecondary, fontWeight: FontWeight.bold, fontSize: 13),
+          'SELECT CONTRIBUTION AMOUNT',
+          style: TextStyle(
+            color: EmberColors.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2,
+          ),
         ),
         const SizedBox(height: 10),
+
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: _presetAmounts.map((amt) {
-            final isSelected = !_isCustomAmount && _selectedAmount == amt;
-            return GestureDetector(
+          children: [
+            ..._presetAmounts.map((amount) {
+              final isSelected = !_isCustomAmount && _selectedAmount == amount;
+              return InkWell(
+                onTap: () {
+                  setState(() {
+                    _isCustomAmount = false;
+                    _selectedAmount = amount;
+                  });
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? EmberColors.primaryAmber
+                        : EmberColors.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isSelected
+                          ? EmberColors.primaryAmberHi
+                          : EmberColors.outlineVariant.withValues(alpha: 0.5),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    '₹$amount',
+                    style: TextStyle(
+                      color: isSelected
+                          ? EmberColors.obsidianBase
+                          : EmberColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              );
+            }),
+            InkWell(
               onTap: () {
                 setState(() {
-                  _isCustomAmount = false;
-                  _selectedAmount = amt;
+                  _isCustomAmount = true;
                 });
               },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
-                  color: isSelected ? AuraColors.primaryBlue : AuraColors.surfaceHigh,
-                  borderRadius: BorderRadius.circular(16),
+                  color: _isCustomAmount
+                      ? EmberColors.primaryAmber
+                      : EmberColors.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isSelected ? AuraColors.accentCyan : AuraColors.outline,
-                    width: isSelected ? 1.4 : 0.8,
+                    color: _isCustomAmount
+                        ? EmberColors.primaryAmberHi
+                        : EmberColors.outlineVariant.withValues(alpha: 0.5),
+                    width: 1.2,
                   ),
-                  boxShadow: isSelected
-                      ? [
-                          BoxShadow(
-                            color: AuraColors.primaryBlue.withValues(alpha: 0.35),
-                            blurRadius: 10,
-                          ),
-                        ]
-                      : null,
                 ),
                 child: Text(
-                  '₹$amt',
+                  'Custom',
                   style: TextStyle(
-                    color: isSelected ? Colors.white : AuraColors.textPrimary,
+                    color: _isCustomAmount
+                        ? EmberColors.obsidianBase
+                        : EmberColors.textPrimary,
+                    fontSize: 15,
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
                   ),
                 ),
               ),
-            );
-          }).toList(),
+            ),
+          ],
         ),
+
+        if (_isCustomAmount) ...[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _customAmountController,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: EmberColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+            decoration: InputDecoration(
+              prefixText: '₹ ',
+              prefixStyle: const TextStyle(color: EmberColors.primaryAmber, fontSize: 18, fontWeight: FontWeight.bold),
+              hintText: 'Enter amount (e.g. 150)',
+              hintStyle: const TextStyle(color: EmberColors.textMuted, fontSize: 14),
+              filled: true,
+              fillColor: EmberColors.surfaceContainerLow,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: EmberColors.outlineVariant),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: EmberColors.primaryAmber, width: 1.5),
+              ),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+
+        const SizedBox(height: 22),
+
+        // ==========================================
+        // PRIMARY ACTION: PAY VIA UPI
+        // ==========================================
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: ElevatedButton.icon(
+            onPressed: () => _launchPayment(scheme: 'upi'),
+            icon: const FaIcon(FontAwesomeIcons.bolt, size: 18),
+            label: Text(
+              'Transfer ₹$_currentAmountString via UPI',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: EmberColors.primaryAmber,
+              foregroundColor: EmberColors.obsidianBase,
+              elevation: 4,
+              shadowColor: EmberColors.primaryAmber.withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+
         const SizedBox(height: 16),
 
-        // Custom Amount Input
-        TextField(
-          controller: _customAmountController,
-          keyboardType: TextInputType.number,
-          style: const TextStyle(color: AuraColors.textPrimary),
-          decoration: InputDecoration(
-            hintText: 'Enter custom amount (₹)',
-            hintStyle: const TextStyle(color: AuraColors.textMuted),
-            prefixIcon: const Icon(Icons.currency_rupee, color: AuraColors.primaryBlueLight, size: 18),
-            filled: true,
-            fillColor: AuraColors.surfaceContainerLow,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AuraColors.outline)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AuraColors.outline)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AuraColors.accentCyan, width: 1.5)),
+        // ==========================================
+        // DIRECT APP SHORTCUTS
+        // ==========================================
+        const Text(
+          'OR PAY VIA SPECIFIC APP',
+          style: TextStyle(
+            color: EmberColors.textMuted,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1,
           ),
-          onChanged: (val) {
-            if (val.trim().isNotEmpty) {
-              setState(() => _isCustomAmount = true);
-            }
-          },
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 8),
 
-        // Pay Button
-        ElevatedButton(
-          onPressed: () => _launchPayment(),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AuraColors.primaryBlue,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: 8,
-            shadowColor: AuraColors.primaryBlue.withValues(alpha: 0.5),
+        Row(
+          children: [
+            Expanded(
+              child: _UpiAppShortcut(
+                label: 'FamPay',
+                icon: FontAwesomeIcons.wallet,
+                color: const Color(0xFFFF9800),
+                onTap: () => _launchPayment(scheme: 'upi', appName: 'FamPay'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _UpiAppShortcut(
+                label: 'GPay',
+                icon: FontAwesomeIcons.google,
+                color: const Color(0xFF4285F4),
+                onTap: () => _launchPayment(scheme: 'gpay', appName: 'Google Pay'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _UpiAppShortcut(
+                label: 'PhonePe',
+                icon: FontAwesomeIcons.p,
+                color: const Color(0xFF673AB7),
+                onTap: () => _launchPayment(scheme: 'phonepe', appName: 'PhonePe'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _UpiAppShortcut(
+                label: 'Paytm',
+                icon: FontAwesomeIcons.moneyBillWave,
+                color: const Color(0xFF00B9F1),
+                onTap: () => _launchPayment(scheme: 'paytmmp', appName: 'Paytm'),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 22),
+
+        // ==========================================
+        // QR CODE SCANNER SECTION
+        // ==========================================
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: EmberColors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: EmberColors.outlineVariant.withValues(alpha: 0.4)),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
             children: [
-              const FaIcon(FontAwesomeIcons.bolt, size: 16),
-              const SizedBox(width: 10),
-              Text(
-                'Pay ₹$_currentAmountString via UPI',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  FaIcon(FontAwesomeIcons.camera, size: 14, color: EmberColors.primaryAmber),
+                  SizedBox(width: 8),
+                  Text(
+                    'Scan with Any UPI App',
+                    style: TextStyle(
+                      color: EmberColors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 200,
+                  height: 200,
+                  color: const Color(0xFF0D1117),
+                  child: CachedNetworkImage(
+                    imageUrl: qrUrl,
+                    placeholder: (context, url) => const Center(
+                      child: CircularProgressIndicator(color: EmberColors.primaryAmber, strokeWidth: 2),
+                    ),
+                    errorWidget: (context, url, error) => const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.qr_code_2_rounded, size: 64, color: EmberColors.primaryAmber),
+                          SizedBox(height: 8),
+                          Text(
+                            upiId,
+                            style: TextStyle(color: EmberColors.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Point camera from GPay, PhonePe, Paytm, or FamPay',
+                style: TextStyle(color: EmberColors.textMuted, fontSize: 11),
               ),
             ],
           ),
         ),
+
+        const SizedBox(height: 24),
       ],
+    );
+  }
+}
+
+class _UpiAppShortcut extends StatelessWidget {
+  final String label;
+  final FaIconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _UpiAppShortcut({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: EmberColors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: EmberColors.outlineVariant.withValues(alpha: 0.4)),
+        ),
+        child: Column(
+          children: [
+            FaIcon(icon, size: 16, color: color),
+            const SizedBox(height: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: EmberColors.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

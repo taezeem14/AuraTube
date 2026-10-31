@@ -1,8 +1,8 @@
 name: new_youtube
-description: "AuraTube: Modern high-performance YouTube & Shorts client in Flutter powered by NewPipe architecture."
+description: "AuraTube: High-fidelity YouTube client powered by Sine & NewPipe architecture with hardware DSP Equalizer."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.11.1
