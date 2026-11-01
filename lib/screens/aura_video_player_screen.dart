@@ -42,7 +42,6 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
   Timer? _hideControlsTimer;
   bool _isFullscreen = false;
   bool _isLiked = false;
-  bool _isDisliked = false;
   bool _isSubscribed = false;
 
   late TabController _tabController;
@@ -546,52 +545,41 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                           ),
                           const SizedBox(height: 16),
 
-                          // Action Buttons Bar (Like, Dislike, Download, EQ, Share)
+                          // Action Buttons Bar (NewPipe Action Bar: Background, Download, Equalizer, Add to, Share, Like)
                           SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Row(
                               children: [
-                                // Like button
+                                // 1. Background Play / Listen Mode (THE iconic NewPipe button)
                                 _buildActionButton(
-                                  icon: FontAwesomeIcons.thumbsUp,
-                                  label: _isLiked ? 'Liked' : 'Like',
-                                  isActive: _isLiked,
-                                  onTap: () {
-                                    setState(() {
-                                      _isLiked = !_isLiked;
-                                      if (_isLiked) _isDisliked = false;
-                                    });
-                                  },
+                                  icon: FontAwesomeIcons.headphones,
+                                  label: _isListenMode ? 'Video Mode' : 'Background',
+                                  isActive: _isListenMode,
+                                  onTap: _toggleListenMode,
                                 ),
                                 const SizedBox(width: 8),
-                                // Dislike button
-                                _buildActionButton(
-                                  icon: FontAwesomeIcons.thumbsDown,
-                                  label: 'Dislike',
-                                  isActive: _isDisliked,
-                                  onTap: () {
-                                    setState(() {
-                                      _isDisliked = !_isDisliked;
-                                      if (_isDisliked) _isLiked = false;
-                                    });
-                                  },
-                                ),
-                                const SizedBox(width: 8),
-                                // Download Button (Video / Audio choice)
+                                // 2. Download Button (Video / Audio choice)
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.download,
                                   label: 'Download',
                                   onTap: () => _showDownloadOptions(context),
                                 ),
                                 const SizedBox(width: 8),
-                                // Sound Shaping & EQ
+                                // 3. Sound Shaping & EQ
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.sliders,
-                                  label: 'Sound EQ',
+                                  label: 'Equalizer',
                                   onTap: () => SoundShapingSheet.show(context),
                                 ),
                                 const SizedBox(width: 8),
-                                // Share
+                                // 4. Add to playlist / Bookmark
+                                _buildActionButton(
+                                  icon: FontAwesomeIcons.bookmark,
+                                  label: 'Add to',
+                                  onTap: () => TrackOptionsSheet.show(context, _currentVideo),
+                                ),
+                                const SizedBox(width: 8),
+                                // 5. Share
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.shareNodes,
                                   label: 'Share',
@@ -607,11 +595,16 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                                   },
                                 ),
                                 const SizedBox(width: 8),
-                                // Add to playlist
+                                // 6. Like button
                                 _buildActionButton(
-                                  icon: FontAwesomeIcons.listCheck,
-                                  label: 'Save',
-                                  onTap: () => TrackOptionsSheet.show(context, _currentVideo),
+                                  icon: FontAwesomeIcons.thumbsUp,
+                                  label: _isLiked ? 'Liked' : 'Like',
+                                  isActive: _isLiked,
+                                  onTap: () {
+                                    setState(() {
+                                      _isLiked = !_isLiked;
+                                    });
+                                  },
                                 ),
                               ],
                             ),

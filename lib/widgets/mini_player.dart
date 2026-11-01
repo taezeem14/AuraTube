@@ -52,148 +52,152 @@ class MiniPlayer extends StatelessWidget {
         );
       },
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        margin: EdgeInsets.zero,
         decoration: BoxDecoration(
-          color: EmberColors.surfaceContainerLow.withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.3)),
+          color: EmberColors.surfaceContainerLow.withValues(alpha: 0.98),
+          border: Border(
+            top: BorderSide(color: EmberColors.primaryBlue.withValues(alpha: 0.35), width: 1.0),
+          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
+              color: Colors.black.withValues(alpha: 0.6),
               blurRadius: 16,
-              offset: const Offset(0, 4),
+              offset: const Offset(0, -3),
             ),
           ],
         ),
         clipBehavior: Clip.antiAlias,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Electric Blue Progress Indicator
-            LinearProgressIndicator(
-              value: progress,
-              minHeight: 2.5,
-              backgroundColor: Colors.white.withValues(alpha: 0.08),
-              valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.primaryBlue),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                children: [
-                  // 16:9 Mini Thumbnail with Play Overlay
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SizedBox(
-                      width: 52,
-                      height: 32,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          CachedNetworkImage(
-                            imageUrl: song.artworkUrl.isNotEmpty
-                                ? song.artworkUrl
-                                : 'https://i.ytimg.com/vi/${song.id}/hqdefault.jpg',
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(color: EmberColors.surfaceContainer),
-                            errorWidget: (context, url, error) => Container(
-                              color: EmberColors.surfaceContainer,
-                              child: const Center(
-                                child: FaIcon(FontAwesomeIcons.youtube, size: 14, color: EmberColors.primaryBlue),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Electric Blue Progress Indicator
+              LinearProgressIndicator(
+                value: progress,
+                minHeight: 2.5,
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
+                valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.primaryBlue),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    // 16:9 Mini Thumbnail with Play Overlay
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        width: 56,
+                        height: 34,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CachedNetworkImage(
+                              imageUrl: song.artworkUrl.isNotEmpty
+                                  ? song.artworkUrl
+                                  : 'https://i.ytimg.com/vi/${song.id}/hqdefault.jpg',
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(color: EmberColors.surfaceContainer),
+                              errorWidget: (context, url, error) => Container(
+                                color: EmberColors.surfaceContainer,
+                                child: const Center(
+                                  child: FaIcon(FontAwesomeIcons.youtube, size: 14, color: EmberColors.primaryBlue),
+                                ),
                               ),
                             ),
+                            Container(
+                              color: Colors.black.withValues(alpha: 0.25),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+
+                    // Title and Channel Name
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: EmberColors.textPrimary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          Container(
-                            color: Colors.black.withValues(alpha: 0.25),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: EmberColors.primaryBlue.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  'AUDIO MODE',
+                                  style: TextStyle(
+                                    color: EmberColors.secondaryCyan,
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  song.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: EmberColors.textMuted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
 
-                  // Title and Channel Name
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          song.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: EmberColors.textPrimary,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: EmberColors.primaryBlue.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                'AUDIO MODE',
-                                style: TextStyle(
-                                  color: EmberColors.secondaryCyan,
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                song.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: EmberColors.textMuted,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                    // Controls
+                    IconButton(
+                      iconSize: 20,
+                      icon: FaIcon(
+                        player.isPlaying ? FontAwesomeIcons.pause : FontAwesomeIcons.play,
+                        color: EmberColors.textPrimary,
+                        size: 16,
+                      ),
+                      onPressed: () {
+                        if (player.isPlaying) {
+                          player.pause();
+                        } else {
+                          player.resume();
+                        }
+                      },
                     ),
-                  ),
-
-                  // Controls
-                  IconButton(
-                    iconSize: 20,
-                    icon: FaIcon(
-                      player.isPlaying ? FontAwesomeIcons.pause : FontAwesomeIcons.play,
-                      color: EmberColors.textPrimary,
-                      size: 16,
+                    IconButton(
+                      iconSize: 18,
+                      icon: const FaIcon(
+                        FontAwesomeIcons.xmark,
+                        color: EmberColors.textMuted,
+                        size: 15,
+                      ),
+                      onPressed: () {
+                        player.stopPlayback();
+                      },
                     ),
-                    onPressed: () {
-                      if (player.isPlaying) {
-                        player.pause();
-                      } else {
-                        player.resume();
-                      }
-                    },
-                  ),
-                  IconButton(
-                    iconSize: 18,
-                    icon: const FaIcon(
-                      FontAwesomeIcons.xmark,
-                      color: EmberColors.textMuted,
-                      size: 15,
-                    ),
-                    onPressed: () {
-                      player.stopPlayback();
-                    },
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

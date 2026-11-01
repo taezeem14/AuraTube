@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
@@ -56,12 +57,14 @@ class EqualizerBandInfo {
 }
 
 class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+  static const MethodChannel _effectsChannel = MethodChannel('com.taezeem.auratube/audio_effects');
   final AndroidEqualizer _equalizer = AndroidEqualizer();
   final AndroidLoudnessEnhancer _loudnessEnhancer = AndroidLoudnessEnhancer();
   late final AudioPlayer _player;
 
   bool _isHardwareEqAvailable = true;
   bool get isHardwareEqAvailable => _isHardwareEqAvailable;
+  int? _lastSessionId;
 
   Song? _currentSong;
   int _playRequestId = 0;
@@ -143,6 +146,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       ),
       audioPipeline: AudioPipeline(
         androidAudioEffects: [
+          _loudnessEnhancer,
           _equalizer,
         ],
       ),
@@ -376,6 +380,34 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         LogService.w('AudioHandler', 'positionStream error: $e');
       },
     );
+
+    // AudioEffect Session ID Broadcast to Android OS (Viper4Android, AudioFX, Wavelet, JamesDSP)
+    _player.androidAudioSessionIdStream.listen((sessionId) {
+      if (sessionId != null && sessionId > 0 && sessionId != _lastSessionId) {
+        _lastSessionId = sessionId;
+        _broadcastAudioSession(sessionId);
+      }
+    });
+  }
+
+  Future<void> _broadcastAudioSession(int sessionId) async {
+    try {
+      await _effectsChannel.invokeMethod('openAudioEffectSession', {'sessionId': sessionId});
+      debugPrint('[AudioHandler] Successfully broadcasted audio session $sessionId to Android OS');
+    } catch (e) {
+      debugPrint('[AudioHandler] Error broadcasting audio session: $e');
+    }
+  }
+
+  Future<bool> openSystemEqualizer() async {
+    try {
+      final sessionId = _player.androidAudioSessionId ?? _lastSessionId ?? 0;
+      final res = await _effectsChannel.invokeMethod<bool>('openSystemEqualizer', {'sessionId': sessionId});
+      return res ?? false;
+    } catch (e) {
+      debugPrint('[AudioHandler] Error opening system equalizer: $e');
+      return false;
+    }
   }
 
   /// NewPipe-style auto-reconnection on mid-stream network drop or socket severance
@@ -773,25 +805,40 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   Future<void> _applySoftwareGainShaping() async {
     try {
-      final bassFactor = _bassBoost * 0.25;
+      // Direct hardware-level dynamic sub-bass punch and loudness boost via Android LoudnessEnhancer
+      final bassGainDb = _bassBoost * 10.0; // Up to +10 dB clean punch
       double avgGain = 0.0;
-      for (final g in _customBandGains.values) {
-        avgGain += g;
-      }
       if (_customBandGains.isNotEmpty) {
+        for (final g in _customBandGains.values) {
+          avgGain += g;
+        }
         avgGain /= _customBandGains.length;
       }
-      final effectiveVol = (1.0 + bassFactor + (avgGain / 30.0)).clamp(0.2, 1.4);
-      await _player.setVolume(effectiveVol);
-    } catch (_) {}
+
+      final targetGainDb = (_eqEnabled ? (bassGainDb + (avgGain * 0.4)) : 0.0).clamp(0.0, 12.0);
+
+      try {
+        await _loudnessEnhancer.setEnabled(_eqEnabled && (_bassBoost > 0.02 || avgGain.abs() > 0.5));
+        await _loudnessEnhancer.setTargetGain(targetGainDb);
+      } catch (e) {
+        debugPrint('[AudioHandler] LoudnessEnhancer update: $e');
+      }
+
+      // Dynamic headroom compensation
+      final dynamicVol = (1.0 + (_eqEnabled ? (avgGain / 45.0) : 0.0)).clamp(0.4, 1.25);
+      await _player.setVolume(dynamicVol);
+    } catch (e) {
+      debugPrint('[AudioHandler] _applySoftwareGainShaping error: $e');
+    }
   }
 
   Future<List<EqualizerBandInfo>> getBandInfoList() async {
-    if (_isHardwareEqAvailable) {
-      try {
+    try {
+      if (_player.audioSource != null) {
         final params = await _equalizer.parameters;
         final bands = params.bands;
         if (bands.isNotEmpty) {
+          _isHardwareEqAvailable = true;
           return List.generate(bands.length, (i) {
             final b = bands[i];
             final freq = b.centerFrequency;
@@ -808,13 +855,12 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             );
           });
         }
-      } catch (e) {
-        debugPrint('[AudioHandler] Hardware EQ unavailable (Custom ROM / Root detected). Falling back to Software DSP: $e');
-        _isHardwareEqAvailable = false;
       }
+    } catch (e) {
+      debugPrint('[AudioHandler] Hardware EQ query notice: $e');
     }
 
-    // Software Multi-Band DSP Fallback (Custom ROMs, LineageOS, GrapheneOS, rooted devices)
+    // High-fidelity standard 5-band configuration (60 Hz, 230 Hz, 910 Hz, 3.6 kHz, 14 kHz)
     const freqs = [60, 230, 910, 3600, 14000];
     const labels = ['60 Hz', '230 Hz', '910 Hz', '3.6 kHz', '14 kHz'];
     return List.generate(5, (i) {

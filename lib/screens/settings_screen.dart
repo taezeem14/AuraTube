@@ -6,6 +6,8 @@ import '../theme/ember_theme.dart';
 import '../widgets/upi_donation_view.dart';
 import 'sound_shaping_sheet.dart';
 import 'diagnostics_log_screen.dart';
+import 'downloads_screen.dart';
+import 'history_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final int initialTab;
@@ -70,9 +72,9 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: EmberColors.primaryAmber.withValues(alpha: 0.16),
+                      color: EmberColors.primaryBlue.withValues(alpha: 0.16),
                     ),
-                    child: const FaIcon(FontAwesomeIcons.gear, color: EmberColors.primaryAmber, size: 18),
+                    child: const FaIcon(FontAwesomeIcons.gear, color: EmberColors.primaryBlue, size: 18),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
@@ -103,21 +105,21 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
               child: TabBar(
                 controller: _tabController,
                 indicator: BoxDecoration(
-                  color: EmberColors.primaryAmber,
+                  color: EmberColors.primaryBlue,
                   borderRadius: BorderRadius.circular(10),
                   boxShadow: [
                     BoxShadow(
-                      color: EmberColors.primaryAmber.withValues(alpha: 0.3),
+                      color: EmberColors.primaryBlue.withValues(alpha: 0.3),
                       blurRadius: 8,
                     ),
                   ],
                 ),
                 indicatorSize: TabBarIndicatorSize.tab,
                 dividerColor: Colors.transparent,
-                labelColor: EmberColors.obsidianBase,
+                labelColor: Colors.white,
                 unselectedLabelColor: EmberColors.textSecondary,
-                labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                 tabs: const [
                   Tab(
                     child: Row(
@@ -149,9 +151,15 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                 children: [
                   SettingsContent(
                     scrollController: scrollController,
-                    onNavigateToDonate: () => _tabController.animateTo(1),
+                    onNavigateToDonate: () {
+                      _tabController.animateTo(1);
+                    },
                   ),
-                  UpiDonationView(scrollController: scrollController),
+                  SingleChildScrollView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: const UpiDonationView(),
+                  ),
                 ],
               ),
             ),
@@ -166,7 +174,11 @@ class SettingsContent extends StatelessWidget {
   final ScrollController? scrollController;
   final VoidCallback? onNavigateToDonate;
 
-  const SettingsContent({super.key, this.scrollController, this.onNavigateToDonate});
+  const SettingsContent({
+    super.key,
+    this.scrollController,
+    this.onNavigateToDonate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -177,27 +189,21 @@ class SettingsContent extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       children: [
         // ==========================================
-        // SOLE CREATOR & AUTHOR SPOTLIGHT CARD
+        // HERO: AUTHOR & CREATOR BIO CARD
         // ==========================================
         Container(
+          margin: const EdgeInsets.only(bottom: 16),
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                EmberColors.primaryAmber.withValues(alpha: 0.18),
-                EmberColors.surfaceContainerHigh.withValues(alpha: 0.8),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
+            color: EmberColors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: EmberColors.primaryAmber.withValues(alpha: 0.45),
+              color: EmberColors.primaryBlue.withValues(alpha: 0.35),
               width: 1.2,
             ),
             boxShadow: [
               BoxShadow(
-                color: EmberColors.primaryAmber.withValues(alpha: 0.08),
+                color: EmberColors.primaryBlue.withValues(alpha: 0.08),
                 blurRadius: 18,
                 offset: const Offset(0, 6),
               ),
@@ -213,10 +219,12 @@ class SettingsContent extends StatelessWidget {
                     height: 52,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: EmberColors.primaryAmber,
+                      gradient: const LinearGradient(
+                        colors: [EmberColors.primaryBlue, EmberColors.secondaryCyan],
+                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: EmberColors.primaryAmber.withValues(alpha: 0.4),
+                          color: EmberColors.primaryBlue.withValues(alpha: 0.4),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -224,9 +232,9 @@ class SettingsContent extends StatelessWidget {
                     ),
                     child: const Center(
                       child: FaIcon(
-                        FontAwesomeIcons.fire,
-                        size: 26,
-                        color: EmberColors.obsidianBase,
+                        FontAwesomeIcons.youtube,
+                        size: 24,
+                        color: Colors.white,
                       ),
                     ),
                   ),
@@ -253,7 +261,7 @@ class SettingsContent extends StatelessWidget {
                             SizedBox(width: 6),
                             FaIcon(
                               FontAwesomeIcons.solidCircleCheck,
-                              color: EmberColors.primaryAmber,
+                              color: EmberColors.primaryBlue,
                               size: 14,
                             ),
                           ],
@@ -262,13 +270,13 @@ class SettingsContent extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            color: EmberColors.primaryAmber.withValues(alpha: 0.2),
+                            color: EmberColors.primaryBlue.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: const Text(
                             'Author & Creator',
                             style: TextStyle(
-                              color: EmberColors.primaryAmberHi,
+                              color: EmberColors.primaryBlueHi,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                             ),
@@ -281,7 +289,7 @@ class SettingsContent extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                'Sine was architected by Muhammad Taezeem Tariq (@taezeem14). Built with a deep obsession for pristine audio quality, zero ads, real-time lyrics, and high-fidelity YouTube audio extraction.',
+                'AuraTube was architected by Muhammad Taezeem Tariq (@taezeem14). Built with a deep obsession for pristine NewPipe YouTube video & audio extraction, zero ads, hardware multi-band DSP equalizer, and libre background playback.',
                 style: TextStyle(
                   color: EmberColors.textSecondary.withValues(alpha: 0.9),
                   fontSize: 12.5,
@@ -295,11 +303,11 @@ class SettingsContent extends StatelessWidget {
                   SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'github.com/taezeem14',
+                      'github.com/taezeem14/AuraTube',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: EmberColors.primaryAmber,
+                        color: EmberColors.primaryBlueHi,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -315,11 +323,11 @@ class SettingsContent extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: EmberColors.primaryAmber,
+                    color: EmberColors.primaryBlue,
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: EmberColors.primaryAmber.withValues(alpha: 0.35),
+                        color: EmberColors.primaryBlue.withValues(alpha: 0.35),
                         blurRadius: 10,
                         offset: const Offset(0, 3),
                       ),
@@ -328,12 +336,12 @@ class SettingsContent extends StatelessWidget {
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      FaIcon(FontAwesomeIcons.heart, size: 14, color: EmberColors.obsidianBase),
+                      FaIcon(FontAwesomeIcons.heart, size: 14, color: Colors.white),
                       SizedBox(width: 8),
                       Text(
                         'Support Taezeem via UPI (7006616470@fam) 💖',
                         style: TextStyle(
-                          color: EmberColors.obsidianBase,
+                          color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
                         ),
@@ -346,19 +354,31 @@ class SettingsContent extends StatelessWidget {
           ),
         ),
 
-        const SizedBox(height: 20),
+        const SizedBox(height: 10),
 
         // ==========================================
-        // SECTION 0: CREATOR SUPPORT & DONATIONS
+        // SECTION 0: QUICK MEDIA NAVIGATION
         // ==========================================
-        const _SectionHeader(title: 'Creator Support & Donations'),
+        const _SectionHeader(title: 'Media & Library'),
         _SettingsTile(
-          icon: FontAwesomeIcons.indianRupeeSign,
-          iconColor: EmberColors.primaryAmber,
-          title: 'Donate via UPI (7006616470@fam)',
-          subtitle: 'Support development directly using GPay, PhonePe, Paytm or FamPay',
-          trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.primaryAmber),
-          onTap: onNavigateToDonate,
+          icon: FontAwesomeIcons.clockRotateLeft,
+          iconColor: EmberColors.primaryBlue,
+          title: 'Watch History',
+          subtitle: '${player.history.length} played videos & songs',
+          trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.textMuted),
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen()));
+          },
+        ),
+        _SettingsTile(
+          icon: FontAwesomeIcons.download,
+          iconColor: EmberColors.secondaryCyan,
+          title: 'Downloads & Offline Media',
+          subtitle: 'Manage saved MP4 videos and M4A audio files',
+          trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.textMuted),
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DownloadsScreen()));
+          },
         ),
 
         const SizedBox(height: 16),
@@ -366,46 +386,31 @@ class SettingsContent extends StatelessWidget {
         // ==========================================
         // SECTION 1: AUDIO & SOUND SHAPING
         // ==========================================
-        const _SectionHeader(title: 'Audio & Sound Engine'),
+        const _SectionHeader(title: 'Audio & DSP Equalizer'),
         _SettingsTile(
           icon: FontAwesomeIcons.sliders,
-          title: 'Equalizer & Audio Shaping',
-          subtitle: 'Preset: ${player.eqPreset} • Bass Boost: ${(player.bassBoost * 100).round()}%',
+          iconColor: EmberColors.primaryBlue,
+          title: 'Equalizer & Audio Effects',
+          subtitle: 'Profile: ${player.eqPreset} • Bass Boost: ${(player.bassBoost * 100).round()}%',
           trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.textMuted),
           onTap: () => SoundShapingSheet.show(context),
         ),
         _SettingsTile(
           icon: FontAwesomeIcons.bolt,
-          title: 'Autoplay Smart Radio',
-          subtitle: 'Automatically queue recommended tracks when songs end',
+          title: 'Autoplay Smart Continuation',
+          subtitle: 'Automatically queue related YouTube videos when playback ends',
           trailing: Switch(
             value: player.isAutoplayEnabled,
-            activeThumbColor: EmberColors.primaryAmber,
+            activeThumbColor: EmberColors.primaryBlue,
             onChanged: (_) => player.toggleAutoplay(),
           ),
-
           onTap: () => player.toggleAutoplay(),
-        ),
-        _SettingsTile(
-          icon: FontAwesomeIcons.gaugeHigh,
-          title: 'Audio Streaming Quality',
-          subtitle: 'High Bitrate YouTube Opus (160 kbps) & AAC (128 kbps)',
-          trailing: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: EmberColors.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: EmberColors.outlineVariant),
-            ),
-            child: const Text('High Bitrate', style: TextStyle(color: EmberColors.primaryAmber, fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
-          onTap: null,
         ),
         _SettingsTile(
           icon: FontAwesomeIcons.stop,
           iconColor: EmberColors.error,
           title: 'Cut Active Playback',
-          subtitle: 'Immediately stop audio and dismiss the playing song',
+          subtitle: 'Immediately stop player and dismiss mini player',
           trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.textMuted),
           onTap: () {
             final messenger = ScaffoldMessenger.of(context);
@@ -430,8 +435,8 @@ class SettingsContent extends StatelessWidget {
         const _SectionHeader(title: 'Storage & Database'),
         _SettingsTile(
           icon: FontAwesomeIcons.broom,
-          title: 'Purge Placeholders & Clean Cache',
-          subtitle: 'Eradicate legacy mock songs and clear temp audio cache',
+          title: 'Clean Cache & Temp Files',
+          subtitle: 'Flushes cached streams and temp audio buffers',
           trailing: const FaIcon(FontAwesomeIcons.chevronRight, size: 12, color: EmberColors.textMuted),
           onTap: () async {
             final messenger = ScaffoldMessenger.of(context);
@@ -440,7 +445,7 @@ class SettingsContent extends StatelessWidget {
               const SnackBar(
                 backgroundColor: EmberColors.surfaceContainerHigh,
                 duration: Duration(seconds: 1),
-                content: Text('Cleaning storage and purging old cache...', style: TextStyle(color: EmberColors.primaryAmber)),
+                content: Text('Cleaning storage and purging old cache...', style: TextStyle(color: EmberColors.primaryBlue)),
               ),
             );
             await player.purgePlaceholders();
@@ -449,7 +454,7 @@ class SettingsContent extends StatelessWidget {
               const SnackBar(
                 backgroundColor: EmberColors.surfaceContainerHigh,
                 duration: Duration(seconds: 2),
-                content: Text('Storage cleaned & cache flushed successfully!', style: TextStyle(color: EmberColors.primaryAmberHi)),
+                content: Text('Storage cleaned & cache flushed successfully!', style: TextStyle(color: EmberColors.primaryBlueHi)),
               ),
             );
           },
@@ -464,23 +469,23 @@ class SettingsContent extends StatelessWidget {
         const _SettingsTile(
           icon: FontAwesomeIcons.mobileScreen,
           title: 'AuraTube Version',
-          subtitle: 'v1.0.2 (Release Build)',
-          trailing: Text('1.0.2', style: TextStyle(color: EmberColors.textMuted, fontSize: 12)),
+          subtitle: 'v1.0.3 (Release Build)',
+          trailing: Text('1.0.3', style: TextStyle(color: EmberColors.primaryBlueHi, fontSize: 12, fontWeight: FontWeight.bold)),
           onTap: null,
         ),
         const _SettingsTile(
           icon: FontAwesomeIcons.youtube,
           iconColor: EmberColors.primaryBlue,
-          title: 'NewPipe YouTube Video & Audio Engine',
+          title: 'NewPipe YouTube Extraction Core',
           subtitle: 'Hardware-accelerated 1080p/720p MP4 video & Opus/AAC audio extraction',
-          trailing: Text('Lossless/HD', style: TextStyle(color: EmberColors.primaryBlueHi, fontSize: 12, fontWeight: FontWeight.bold)),
+          trailing: Text('Libre/HD', style: TextStyle(color: EmberColors.primaryBlueHi, fontSize: 12, fontWeight: FontWeight.bold)),
           onTap: null,
         ),
         const _SettingsTile(
           icon: FontAwesomeIcons.shieldHeart,
-          title: 'Open Source & Ad-Free',
+          title: 'Open Source & Libre',
           subtitle: 'No telemetry, zero third-party ads, strictly local storage',
-          trailing: Text('100% Free', style: TextStyle(color: EmberColors.primaryAmber, fontSize: 12)),
+          trailing: Text('100% Free', style: TextStyle(color: EmberColors.secondaryCyan, fontSize: 12)),
           onTap: null,
         ),
         _SettingsTile(
@@ -512,7 +517,7 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(left: 4, bottom: 8, top: 4),
       child: Text(
         title.toUpperCase(),
-        style: TextStyle(
+        style: const TextStyle(
           color: EmberColors.textMuted,
           fontSize: 11,
           fontWeight: FontWeight.bold,
@@ -562,7 +567,7 @@ class _SettingsTile extends StatelessWidget {
             child: FaIcon(
               icon,
               size: 16,
-              color: iconColor ?? EmberColors.primaryAmber,
+              color: iconColor ?? EmberColors.primaryBlue,
             ),
           ),
         ),
@@ -570,7 +575,7 @@ class _SettingsTile extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
+          style: const TextStyle(
             color: EmberColors.textPrimary,
             fontSize: 13.5,
             fontWeight: FontWeight.w600,
@@ -580,7 +585,7 @@ class _SettingsTile extends StatelessWidget {
           subtitle,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
+          style: const TextStyle(
             color: EmberColors.textMuted,
             fontSize: 11,
           ),

@@ -670,4 +670,35 @@ class DownloadService {
       yt.close();
     }
   }
+
+  /// List all offline downloaded files from device storage
+  static Future<List<File>> getDownloadedFiles({required bool isVideo}) async {
+    try {
+      final dir = await _getMediaDirectory(isVideo: isVideo);
+      if (await dir.exists()) {
+        final list = dir.listSync().whereType<File>().where((f) {
+          final ext = f.path.split('.').last.toLowerCase();
+          return isVideo ? (ext == 'mp4' || ext == 'webm') : (ext == 'm4a' || ext == 'mp3' || ext == 'opus');
+        }).toList();
+        list.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+        return list;
+      }
+    } catch (e) {
+      debugPrint('[DownloadService] getDownloadedFiles error: $e');
+    }
+    return [];
+  }
+
+  /// Delete a downloaded file
+  static Future<bool> deleteDownloadedFile(File file) async {
+    try {
+      if (await file.exists()) {
+        await file.delete();
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[DownloadService] deleteDownloadedFile error: $e');
+    }
+    return false;
+  }
 }

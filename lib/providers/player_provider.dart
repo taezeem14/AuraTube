@@ -1476,6 +1476,10 @@ class PlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> openSystemEqualizer() async {
+    return await _audioHandler.openSystemEqualizer();
+  }
+
   // Favorites & History
   Future<void> toggleFavorite(Song song) async {
     final idx = _favorites.indexWhere((s) => s.id == song.id);
@@ -1562,6 +1566,20 @@ class PlayerProvider extends ChangeNotifier {
       return res.error ?? 'Could not parse YouTube link';
     }
 
+    return null;
+  }
+
+  Future<Playlist?> importYouTubePlaylist(String url) async {
+    final clean = url.trim();
+    if (clean.isEmpty) return null;
+    final res = await YouTubeImporterService.importFromUrl(clean);
+    if (res.playlist != null && res.playlist!.songs.isNotEmpty) {
+      final pl = res.playlist!;
+      _playlists.insert(0, pl);
+      _storageService.savePlaylists(_playlists);
+      notifyListeners();
+      return pl;
+    }
     return null;
   }
 

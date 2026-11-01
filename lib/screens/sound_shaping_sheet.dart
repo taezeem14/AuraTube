@@ -69,10 +69,10 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: EmberColors.primaryAmber.withValues(alpha: 0.15),
+                            color: EmberColors.primaryBlue.withValues(alpha: 0.15),
                             shape: BoxShape.circle,
                           ),
-                          child: const FaIcon(FontAwesomeIcons.sliders, size: 16, color: EmberColors.primaryAmber),
+                          child: const FaIcon(FontAwesomeIcons.sliders, size: 16, color: EmberColors.primaryBlue),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -80,7 +80,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Sound Shaping & EQ',
+                                'Sound Shaping & Equalizer',
                                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                       color: EmberColors.textPrimary,
                                       fontWeight: FontWeight.bold,
@@ -89,7 +89,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               Text(
-                                'Analog Warmth & Multi-Band DSP',
+                                'Hardware Multi-Band DSP & Loudness Punch',
                                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                                       color: EmberColors.textMuted,
                                     ),
@@ -122,14 +122,55 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                       const SizedBox(width: 8),
                       Switch(
                         value: player.eqEnabled,
-                        activeTrackColor: EmberColors.primaryAmber,
+                        activeTrackColor: EmberColors.primaryBlue,
+                        activeThumbColor: Colors.white,
                         onChanged: (val) => player.setEqualizerEnabled(val),
                       ),
                     ],
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // Root / Custom ROM Equalizer Intent Button
+              InkWell(
+                onTap: () async {
+                  final launched = await player.openSystemEqualizer();
+                  if (!launched && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Broadcasted session to audio effects. Internal DSP is active.'),
+                        backgroundColor: EmberColors.surfaceContainerHigh,
+                      ),
+                    );
+                  }
+                },
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: EmberColors.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.35)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      FaIcon(FontAwesomeIcons.sliders, size: 13, color: EmberColors.primaryBlue),
+                      SizedBox(width: 8),
+                      Text(
+                        'Launch System Equalizer (Viper4Android / AudioFX / Wavelet)',
+                        style: TextStyle(
+                          color: EmberColors.textPrimary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
 
               // Studio Stem Isolation (YouTube Smart Stems + AI Demucs + DSP Fallback)
               Row(
@@ -152,9 +193,9 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
                       decoration: BoxDecoration(
-                        color: EmberColors.primaryAmber.withValues(alpha: 0.15),
+                        color: EmberColors.primaryBlue.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: EmberColors.primaryAmber.withValues(alpha: 0.4), width: 1),
+                        border: Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.4), width: 1),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -163,14 +204,14 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                             const SizedBox(
                               width: 9,
                               height: 9,
-                              child: CircularProgressIndicator(strokeWidth: 1.5, color: EmberColors.primaryAmber),
+                              child: CircularProgressIndicator(strokeWidth: 1.5, color: EmberColors.primaryBlue),
                             ),
                             const SizedBox(width: 5),
                           ],
                           Text(
                             player.stemStatusBadgeText!,
                             style: const TextStyle(
-                              color: EmberColors.primaryAmber,
+                              color: EmberColors.primaryBlue,
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
                             ),
@@ -222,7 +263,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.restore_rounded, size: 14, color: EmberColors.primaryAmber),
+                          Icon(Icons.restore_rounded, size: 14, color: EmberColors.primaryBlue),
                           SizedBox(width: 6),
                           Text(
                             'Revert to Original Studio Track',
@@ -247,13 +288,13 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final p in ['Warm Tape', 'Lo-Fi', 'Bass Boost', 'Vocal Air', 'Acoustic', 'Flat'])
+                  for (final p in ['Flat', 'Bass Boost', 'Vocal Air', 'Warm Tape', 'Lo-Fi', 'Acoustic'])
                     ChoiceChip(
                       label: Text(p),
                       selected: player.eqPreset == p,
-                      selectedColor: EmberColors.primaryAmber,
+                      selectedColor: EmberColors.primaryBlue,
                       labelStyle: TextStyle(
-                        color: player.eqPreset == p ? EmberColors.obsidianBase : EmberColors.textSecondary,
+                        color: player.eqPreset == p ? Colors.white : EmberColors.textSecondary,
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -270,19 +311,19 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
               ),
               const SizedBox(height: 24),
 
-              // Bass Boost / Sub-Warmth Slider (Throttled 50ms & instant local UI feedback)
+              // Bass Boost / Sub-Warmth Slider
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Hearth Bass Boost', style: TextStyle(color: EmberColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
-                  Text('${((_localBassBoost ?? player.bassBoost) * 100).toInt()}%', style: const TextStyle(color: EmberColors.primaryAmber, fontSize: 13, fontWeight: FontWeight.bold)),
+                  const Text('Hardware Bass Punch & Loudness', style: TextStyle(color: EmberColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+                  Text('${((_localBassBoost ?? player.bassBoost) * 100).toInt()}%', style: const TextStyle(color: EmberColors.primaryBlueHi, fontSize: 13, fontWeight: FontWeight.bold)),
                 ],
               ),
               SliderTheme(
                 data: SliderTheme.of(context).copyWith(
                   trackHeight: 4,
-                  activeTrackColor: EmberColors.primaryAmber,
-                  thumbColor: EmberColors.primaryAmberHi,
+                  activeTrackColor: EmberColors.primaryBlue,
+                  thumbColor: EmberColors.primaryBlueHi,
                   inactiveTrackColor: EmberColors.surfaceContainerHigh,
                 ),
                 child: Slider(
@@ -327,7 +368,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          player.isHardwareEqAvailable ? 'Hardware DSP Engine' : 'Software DSP (Root/ROM Safe)',
+                          player.isHardwareEqAvailable ? 'Hardware DSP Active' : 'Software DSP Safe Fallback',
                           style: const TextStyle(color: EmberColors.secondaryCyan, fontSize: 9.5, fontWeight: FontWeight.bold),
                         ),
                       ],
@@ -373,10 +414,10 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                       Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: EmberColors.primaryAmber.withValues(alpha: 0.15),
+                          color: EmberColors.primaryBlue.withValues(alpha: 0.15),
                           shape: BoxShape.circle,
                         ),
-                        child: const FaIcon(FontAwesomeIcons.gaugeHigh, size: 14, color: EmberColors.primaryAmber),
+                        child: const FaIcon(FontAwesomeIcons.gaugeHigh, size: 14, color: EmberColors.primaryBlue),
                       ),
                       const SizedBox(width: 10),
                       Text(
@@ -398,7 +439,7 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                     child: Text(
                       'Normal',
                       style: TextStyle(
-                        color: player.speed == 1.0 ? EmberColors.textMuted : EmberColors.primaryAmber,
+                        color: player.speed == 1.0 ? EmberColors.textMuted : EmberColors.primaryBlue,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -412,9 +453,9 @@ class _SoundShapingSheetState extends State<SoundShapingSheet> {
                   Expanded(
                     child: SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: EmberColors.primaryAmber,
+                        activeTrackColor: EmberColors.primaryBlue,
                         inactiveTrackColor: EmberColors.outlineVariant.withValues(alpha: 0.4),
-                        thumbColor: EmberColors.primaryAmberHi,
+                        thumbColor: EmberColors.primaryBlueHi,
                         trackHeight: 3,
                         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
                       ),
@@ -495,9 +536,9 @@ class _BandSliderState extends State<_BandSlider> {
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 3,
-                activeTrackColor: EmberColors.primaryAmber,
-                thumbColor: EmberColors.textPrimary,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                activeTrackColor: EmberColors.primaryBlue,
+                thumbColor: EmberColors.primaryBlueHi,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                 inactiveTrackColor: EmberColors.surfaceContainerHigh,
               ),
               child: Slider(
@@ -527,7 +568,7 @@ class _BandSliderState extends State<_BandSlider> {
                   : '${_gain > 0 ? '+' : ''}${_gain.toStringAsFixed(1)} dB',
               textAlign: TextAlign.end,
               style: TextStyle(
-                color: _gain.abs() > 0.5 ? EmberColors.primaryAmber : EmberColors.textMuted,
+                color: _gain.abs() > 0.5 ? EmberColors.primaryBlueHi : EmberColors.textMuted,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
               ),
@@ -568,12 +609,12 @@ class _IsolationCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isActive
-                ? EmberColors.primaryAmber.withValues(alpha: 0.14)
+                ? EmberColors.primaryBlue.withValues(alpha: 0.14)
                 : EmberColors.surfaceContainerLow,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isActive
-                  ? EmberColors.primaryAmber
+                  ? EmberColors.primaryBlue
                   : EmberColors.outlineVariant.withValues(alpha: 0.6),
               width: isActive ? 1.5 : 1.0,
             ),
@@ -588,33 +629,33 @@ class _IsolationCard extends StatelessWidget {
                     padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
                       color: isActive
-                          ? EmberColors.primaryAmber.withValues(alpha: 0.25)
+                          ? EmberColors.primaryBlue.withValues(alpha: 0.25)
                           : EmberColors.surfaceContainerHigh,
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       icon,
                       size: 15,
-                      color: isActive ? EmberColors.primaryAmber : EmberColors.textSecondary,
+                      color: isActive ? EmberColors.primaryBlue : EmberColors.textSecondary,
                     ),
                   ),
                   if (isLoading)
                     const SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: EmberColors.primaryAmber),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: EmberColors.primaryBlue),
                     )
                   else if (isActive)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: EmberColors.primaryAmber,
+                        color: EmberColors.primaryBlue,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: const Text(
                         'ACTIVE',
                         style: TextStyle(
-                          color: EmberColors.obsidianBase,
+                          color: Colors.white,
                           fontSize: 9.0,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.5,
@@ -627,7 +668,7 @@ class _IsolationCard extends StatelessWidget {
               Text(
                 title,
                 style: TextStyle(
-                  color: isActive ? EmberColors.primaryAmber : EmberColors.textPrimary,
+                  color: isActive ? EmberColors.primaryBlue : EmberColors.textPrimary,
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
                 ),
@@ -638,7 +679,7 @@ class _IsolationCard extends StatelessWidget {
               Text(
                 subtitle,
                 style: TextStyle(
-                  color: isActive ? EmberColors.primaryAmberHi.withValues(alpha: 0.8) : EmberColors.textMuted,
+                  color: isActive ? EmberColors.primaryBlueHi.withValues(alpha: 0.8) : EmberColors.textMuted,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w500,
                 ),

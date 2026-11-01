@@ -11,6 +11,8 @@ class Playlist {
   final String? coverUrl;
   final String? continuationToken;
 
+  String get name => title;
+
   const Playlist({
     required this.id,
     required this.title,
