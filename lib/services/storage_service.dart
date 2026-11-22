@@ -466,4 +466,226 @@ class StorageService {
     await saveSubscriptions(list);
     return isNowSubscribed;
   }
+
+  // =========================================================================
+  // Audio DSP, Metrolist Playback & Hardware Gestures Preferences
+  // =========================================================================
+  static const String _pitchKey = 'auratube_pitch_v1';
+  static const String _skipSilenceKey = 'auratube_skip_silence_v1';
+  static const String _loudnessNormKey = 'auratube_loudness_norm_v1';
+  static const String _clippingProtKey = 'auratube_clipping_prot_v1';
+  static const String _lyricsOffsetKey = 'auratube_lyrics_offset_v1';
+  static const String _shakeSkipKey = 'auratube_shake_skip_v1';
+  static const String _flipPauseKey = 'auratube_flip_pause_v1';
+
+  double loadPitch() => _prefs?.getDouble(_pitchKey) ?? 1.0;
+  Future<void> savePitch(double v) async => await _prefs?.setDouble(_pitchKey, v);
+
+  bool loadSkipSilence() => _prefs?.getBool(_skipSilenceKey) ?? false;
+  Future<void> saveSkipSilence(bool v) async => await _prefs?.setBool(_skipSilenceKey, v);
+
+  bool loadLoudnessNormalization() => _prefs?.getBool(_loudnessNormKey) ?? false;
+  Future<void> saveLoudnessNormalization(bool v) async => await _prefs?.setBool(_loudnessNormKey, v);
+
+  bool loadClippingProtection() => _prefs?.getBool(_clippingProtKey) ?? true;
+  Future<void> saveClippingProtection(bool v) async => await _prefs?.setBool(_clippingProtKey, v);
+
+  double loadLyricsOffset() => _prefs?.getDouble(_lyricsOffsetKey) ?? 0.0;
+  Future<void> saveLyricsOffset(double v) async => await _prefs?.setDouble(_lyricsOffsetKey, v);
+
+  bool loadShakeToSkip() => _prefs?.getBool(_shakeSkipKey) ?? false;
+  Future<void> saveShakeToSkip(bool v) async => await _prefs?.setBool(_shakeSkipKey, v);
+
+  bool loadFlipToPause() => _prefs?.getBool(_flipPauseKey) ?? false;
+  Future<void> saveFlipToPause(bool v) async => await _prefs?.setBool(_flipPauseKey, v);
+
+  // =========================================================================
+  // SponsorBlock Preferences & Skip Statistics
+  // =========================================================================
+  static const String _sbEnabledKey = 'auratube_sb_enabled_v1';
+  static const String _sbCatsKey = 'auratube_sb_categories_v1';
+  static const String _sbSkippedCountKey = 'auratube_sb_skipped_count_v1';
+  static const String _sbSecondsSavedKey = 'auratube_sb_seconds_saved_v1';
+
+  bool loadSponsorBlockEnabled() => _prefs?.getBool(_sbEnabledKey) ?? true;
+  Future<void> saveSponsorBlockEnabled(bool v) async => await _prefs?.setBool(_sbEnabledKey, v);
+
+  Set<String> loadSponsorBlockCategories() {
+    final list = _prefs?.getStringList(_sbCatsKey);
+    if (list == null) {
+      return {'sponsor', 'selfpromo', 'intro', 'outro', 'interaction', 'music_offtopic'};
+    }
+    return list.toSet();
+  }
+
+  Future<void> saveSponsorBlockCategories(Set<String> cats) async {
+    await _prefs?.setStringList(_sbCatsKey, cats.toList());
+  }
+
+  int loadSponsorSegmentsSkipped() => _prefs?.getInt(_sbSkippedCountKey) ?? 0;
+  Future<void> saveSponsorSegmentsSkipped(int v) async => await _prefs?.setInt(_sbSkippedCountKey, v);
+
+  double loadSponsorSecondsSaved() => _prefs?.getDouble(_sbSecondsSavedKey) ?? 0.0;
+  Future<void> saveSponsorSecondsSaved(double v) async => await _prefs?.setDouble(_sbSecondsSavedKey, v);
+
+  // =========================================================================
+  // Audile Recognition History
+  // =========================================================================
+  static const String _recogHistoryKey = 'auratube_recognition_history_v1';
+
+  List<Map<String, dynamic>> loadRecognitionHistory() {
+    final raw = _prefs?.getStringList(_recogHistoryKey) ?? [];
+    final out = <Map<String, dynamic>>[];
+    for (final s in raw) {
+      try {
+        final m = jsonDecode(s);
+        if (m is Map<String, dynamic>) out.add(m);
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  Future<void> saveRecognitionHistory(List<Map<String, dynamic>> records) async {
+    final encoded = records.take(100).map((m) => jsonEncode(m)).toList();
+    await _prefs?.setStringList(_recogHistoryKey, encoded);
+  }
+
+  // =========================================================================
+  // Metrolist Listening Insights & Play Telemetry
+  // =========================================================================
+  static const String _listenSecsKey = 'auratube_listen_secs_v1';
+  static const String _playCountsKey = 'auratube_play_counts_v1';
+  static const String _artistCountsKey = 'auratube_artist_counts_v1';
+
+  int loadTotalListeningSeconds() => _prefs?.getInt(_listenSecsKey) ?? 0;
+  Future<void> saveTotalListeningSeconds(int secs) async => await _prefs?.setInt(_listenSecsKey, secs);
+
+  Map<String, int> loadPlayCounts() {
+    final raw = _prefs?.getString(_playCountsKey);
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return decoded.map((k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0));
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  Future<void> savePlayCounts(Map<String, int> counts) async {
+    await _prefs?.setString(_playCountsKey, jsonEncode(counts));
+  }
+
+  Map<String, int> loadArtistPlayCounts() {
+    final raw = _prefs?.getString(_artistCountsKey);
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return decoded.map((k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0));
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  Future<void> saveArtistPlayCounts(Map<String, int> counts) async {
+    await _prefs?.setString(_artistCountsKey, jsonEncode(counts));
+  }
+
+  // =========================================================================
+  // Full JSON Backup & Restore (Audile / Metrolist / NewPipe Standard)
+  // =========================================================================
+  String exportFullBackupJson() {
+    final payload = {
+      'app': 'AuraTube',
+      'schemaVersion': 1,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'favorites': loadFavorites().map((s) => s.toMap()).toList(),
+      'history': loadHistory().map((s) => s.toMap()).toList(),
+      'playlists': loadPlaylists().map((p) => p.toMap()).toList(),
+      'subscriptions': loadSubscriptions().map((s) => s.toJson()).toList(),
+      'recognitionHistory': loadRecognitionHistory(),
+      'settings': {
+        'eqEnabled': loadEqualizerEnabled(),
+        'eqPreset': loadEqualizerPreset(),
+        'bassBoost': loadBassBoost(),
+        'pitch': loadPitch(),
+        'skipSilence': loadSkipSilence(),
+        'loudnessNormalization': loadLoudnessNormalization(),
+        'clippingProtection': loadClippingProtection(),
+        'lyricsOffset': loadLyricsOffset(),
+        'sponsorBlockEnabled': loadSponsorBlockEnabled(),
+        'sponsorBlockCategories': loadSponsorBlockCategories().toList(),
+      },
+    };
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  Future<bool> importFullBackupJson(String rawJson) async {
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map<String, dynamic>) return false;
+
+      if (decoded['favorites'] is List) {
+        final favs = (decoded['favorites'] as List)
+            .whereType<Map>()
+            .map((m) => Song.fromMap(Map<String, dynamic>.from(m)))
+            .toList();
+        await saveFavorites(favs);
+      }
+      if (decoded['history'] is List) {
+        final hist = (decoded['history'] as List)
+            .whereType<Map>()
+            .map((m) => Song.fromMap(Map<String, dynamic>.from(m)))
+            .toList();
+        await saveHistory(hist);
+      }
+      if (decoded['playlists'] is List) {
+        final pls = (decoded['playlists'] as List)
+            .whereType<Map>()
+            .map((m) => Playlist.fromMap(Map<String, dynamic>.from(m)))
+            .toList();
+        await savePlaylists(pls);
+      }
+      if (decoded['subscriptions'] is List) {
+        final subs = (decoded['subscriptions'] as List)
+            .whereType<Map>()
+            .map((m) => LocalSubscription.fromJson(Map<String, dynamic>.from(m)))
+            .toList();
+        await saveSubscriptions(subs);
+      }
+      if (decoded['recognitionHistory'] is List) {
+        final recs = (decoded['recognitionHistory'] as List)
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
+        await saveRecognitionHistory(recs);
+      }
+      if (decoded['settings'] is Map) {
+        final s = Map<String, dynamic>.from(decoded['settings'] as Map);
+        if (s['eqEnabled'] is bool) await saveEqualizerEnabled(s['eqEnabled'] as bool);
+        if (s['eqPreset'] is String) await saveEqualizerPreset(s['eqPreset'] as String);
+        if (s['bassBoost'] is num) await saveBassBoost((s['bassBoost'] as num).toDouble());
+        if (s['pitch'] is num) await savePitch((s['pitch'] as num).toDouble());
+        if (s['skipSilence'] is bool) await saveSkipSilence(s['skipSilence'] as bool);
+        if (s['loudnessNormalization'] is bool) {
+          await saveLoudnessNormalization(s['loudnessNormalization'] as bool);
+        }
+        if (s['clippingProtection'] is bool) await saveClippingProtection(s['clippingProtection'] as bool);
+        if (s['lyricsOffset'] is num) await saveLyricsOffset((s['lyricsOffset'] as num).toDouble());
+        if (s['sponsorBlockEnabled'] is bool) {
+          await saveSponsorBlockEnabled(s['sponsorBlockEnabled'] as bool);
+        }
+        if (s['sponsorBlockCategories'] is List) {
+          await saveSponsorBlockCategories(
+            (s['sponsorBlockCategories'] as List).map((e) => e.toString()).toSet(),
+          );
+        }
+      }
+      return true;
+    } catch (e) {
+      debugPrint('[StorageService] importFullBackupJson error: $e');
+      return false;
+    }
+  }
 }

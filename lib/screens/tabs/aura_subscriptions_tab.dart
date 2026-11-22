@@ -17,10 +17,13 @@ class AuraSubscriptionsTab extends StatefulWidget {
   State<AuraSubscriptionsTab> createState() => _AuraSubscriptionsTabState();
 }
 
-class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
+class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> with AutomaticKeepAliveClientMixin {
   String? _selectedChannelName;
   List<Song> _channelVideos = [];
   bool _isLoadingChannel = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   Future<void> _loadChannelVideos(String channelName) async {
     setState(() {
@@ -41,6 +44,7 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final storage = context.watch<StorageService>();
     final subs = storage.loadSubscriptions();
 
@@ -52,49 +56,39 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 72,
-                height: 72,
+                width: 68,
+                height: 68,
                 decoration: BoxDecoration(
-                  color: EmberColors.primaryBlue.withValues(alpha: 0.12),
+                  color: EmberColors.surfaceContainerLow,
                   shape: BoxShape.circle,
+                  border: Border.all(color: EmberColors.outlineVariant),
                 ),
                 child: const Center(
-                  child: FaIcon(
-                    FontAwesomeIcons.users,
-                    size: 30,
-                    color: EmberColors.primaryBlue,
-                  ),
+                  child: FaIcon(FontAwesomeIcons.users, size: 26, color: EmberColors.monoWhite),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
               const Text(
                 'No Subscriptions Yet',
-                style: TextStyle(
-                  color: EmberColors.textPrimary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(color: EmberColors.textPrimary, fontSize: 17, fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               const Text(
-                'Subscribe to your favorite YouTube channels while watching videos to build your private offline subscription feed.',
+                'Tap Subscribe on any video to store channels privately on-device with NewPipe offline subscriptions.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: EmberColors.textMuted,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
+                style: TextStyle(color: EmberColors.textMuted, fontSize: 12.5, height: 1.45),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 22),
               ElevatedButton.icon(
                 onPressed: widget.onBrowseTrending,
-                icon: const FaIcon(FontAwesomeIcons.fire, size: 14, color: Colors.white),
-                label: const Text('Discover Channels in Trending', style: TextStyle(fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: EmberColors.primaryBlue,
+                  backgroundColor: EmberColors.monoWhite,
+                  foregroundColor: EmberColors.onAccent,
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
+                icon: const FaIcon(FontAwesomeIcons.fire, size: 13),
+                label: const Text('Discover Creators', style: TextStyle(fontWeight: FontWeight.w700)),
               ),
             ],
           ),
@@ -106,23 +100,22 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
       return Column(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: EmberColors.surfaceContainerLow,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: const BoxDecoration(
+              color: EmberColors.surfaceContainerLow,
+              border: Border(bottom: BorderSide(color: EmberColors.borderSubtle)),
+            ),
             child: Row(
               children: [
                 IconButton(
-                  icon: const FaIcon(FontAwesomeIcons.arrowLeft, size: 15, color: EmberColors.textPrimary),
+                  icon: const FaIcon(FontAwesomeIcons.arrowLeft, size: 15, color: EmberColors.monoWhite),
                   onPressed: () => setState(() => _selectedChannelName = null),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     _selectedChannelName!,
-                    style: const TextStyle(
-                      color: EmberColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(color: EmberColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -132,17 +125,13 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
           ),
           Expanded(
             child: _isLoadingChannel
-                ? const Center(child: CircularProgressIndicator(color: EmberColors.primaryBlue))
+                ? const Center(child: CircularProgressIndicator(color: EmberColors.monoWhite, strokeWidth: 2))
                 : _channelVideos.isEmpty
-                    ? const Center(
-                        child: Text('No videos found for this channel.', style: TextStyle(color: EmberColors.textMuted)),
-                      )
+                    ? const Center(child: Text('No uploads found.', style: TextStyle(color: EmberColors.textMuted)))
                     : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 96),
                         itemCount: _channelVideos.length,
-                        itemBuilder: (context, index) {
-                          return AuraVideoCard(video: _channelVideos[index]);
-                        },
+                        itemBuilder: (context, index) => AuraVideoCard(video: _channelVideos[index]),
                       ),
           ),
         ],
@@ -150,21 +139,20 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
       itemCount: subs.length,
-      separatorBuilder: (context, index) => const Divider(color: EmberColors.outlineVariant, height: 1),
+      separatorBuilder: (context, index) => const Divider(color: EmberColors.borderSubtle, height: 1),
       itemBuilder: (context, index) {
         final sub = subs[index];
         return ListTile(
           contentPadding: const EdgeInsets.symmetric(vertical: 6),
           leading: Container(
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                colors: [EmberColors.primaryBlue, EmberColors.secondaryCyan],
-              ),
+              color: EmberColors.surfaceContainerHigh,
+              border: Border.all(color: EmberColors.outlineVariant),
             ),
             child: sub.avatarUrl.isNotEmpty
                 ? ClipOval(
@@ -174,7 +162,7 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
                       errorWidget: (context, url, error) => Center(
                         child: Text(
                           sub.name.isNotEmpty ? sub.name[0].toUpperCase() : 'C',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                          style: const TextStyle(color: EmberColors.monoWhite, fontWeight: FontWeight.w800, fontSize: 16),
                         ),
                       ),
                     ),
@@ -182,36 +170,36 @@ class _AuraSubscriptionsTabState extends State<AuraSubscriptionsTab> {
                 : Center(
                     child: Text(
                       sub.name.isNotEmpty ? sub.name[0].toUpperCase() : 'C',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                      style: const TextStyle(color: EmberColors.monoWhite, fontWeight: FontWeight.w800, fontSize: 16),
                     ),
                   ),
           ),
           title: Text(
             sub.name,
-            style: const TextStyle(
-              color: EmberColors.textPrimary,
-              fontSize: 14.5,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(color: EmberColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w600),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
-            sub.subscriberCount.isNotEmpty ? '${sub.subscriberCount} subscribers' : 'Channel Subscribed',
-            style: const TextStyle(color: EmberColors.textMuted, fontSize: 12),
+            sub.subscriberCount.isNotEmpty ? '${sub.subscriberCount} subscribers' : 'Local Subscription',
+            style: const TextStyle(color: EmberColors.textMuted, fontSize: 11.5),
           ),
           trailing: TextButton(
             onPressed: () {
               storage.toggleSubscription(sub);
+              setState(() {});
             },
             style: TextButton.styleFrom(
               backgroundColor: EmberColors.surfaceContainerHigh,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: EmberColors.outlineVariant),
+              ),
             ),
             child: const Text(
               'Subscribed',
-              style: TextStyle(color: EmberColors.primaryBlueHi, fontSize: 11, fontWeight: FontWeight.bold),
+              style: TextStyle(color: EmberColors.monoSilver, fontSize: 11, fontWeight: FontWeight.w700),
             ),
           ),
           onTap: () => _loadChannelVideos(sub.name),

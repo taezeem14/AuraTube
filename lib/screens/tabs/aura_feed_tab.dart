@@ -16,9 +16,12 @@ class AuraFeedTab extends StatefulWidget {
   State<AuraFeedTab> createState() => _AuraFeedTabState();
 }
 
-class _AuraFeedTabState extends State<AuraFeedTab> {
+class _AuraFeedTabState extends State<AuraFeedTab> with AutomaticKeepAliveClientMixin {
   List<Song> _feedVideos = [];
   bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -43,7 +46,6 @@ class _AuraFeedTabState extends State<AuraFeedTab> {
     }
 
     try {
-      // Fetch latest uploads for the first few subscribed channels or search their names
       final List<Song> combined = [];
       for (final sub in subs.take(5)) {
         final results = await YouTubeFeedService.fetchCategoryFeed('all', forceRefresh: forceRefresh);
@@ -51,7 +53,6 @@ class _AuraFeedTabState extends State<AuraFeedTab> {
         combined.addAll(matches);
       }
 
-      // If specific search didn't match, fallback to general fresh feed
       if (combined.isEmpty) {
         final fallback = await YouTubeFeedService.fetchCategoryFeed('all', forceRefresh: forceRefresh);
         combined.addAll(fallback.take(15));
@@ -70,71 +71,66 @@ class _AuraFeedTabState extends State<AuraFeedTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final storage = context.watch<StorageService>();
     final subs = storage.loadSubscriptions();
 
     if (_isLoading) {
       return const Center(
-        child: CircularProgressIndicator(color: EmberColors.primaryBlue),
+        child: CircularProgressIndicator(color: EmberColors.monoWhite, strokeWidth: 2),
       );
     }
 
     if (subs.isEmpty || _feedVideos.isEmpty) {
       return RefreshIndicator(
-        color: EmberColors.primaryBlue,
+        color: EmberColors.monoWhite,
         backgroundColor: EmberColors.surfaceContainerHigh,
         onRefresh: () => _loadFeed(forceRefresh: true),
         child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 56),
           children: [
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 72,
-                    height: 72,
+                    width: 68,
+                    height: 68,
                     decoration: BoxDecoration(
-                      color: EmberColors.primaryBlue.withValues(alpha: 0.12),
+                      color: EmberColors.surfaceContainerLow,
                       shape: BoxShape.circle,
+                      border: Border.all(color: EmberColors.outlineVariant),
                     ),
                     child: const Center(
-                      child: FaIcon(
-                        FontAwesomeIcons.rss,
-                        size: 32,
-                        color: EmberColors.primaryBlue,
-                      ),
+                      child: FaIcon(FontAwesomeIcons.rss, size: 26, color: EmberColors.monoWhite),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
                   const Text(
-                    "What's New (Feed)",
+                    "What's New Feed",
                     style: TextStyle(
                       color: EmberColors.textPrimary,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   const Text(
-                    'Subscribe to YouTube channels to see their latest uploads and notifications right here in your feed.',
+                    'Subscribe to YouTube creators locally to aggregate their latest uploads here with zero account tracking.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: EmberColors.textMuted,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
+                    style: TextStyle(color: EmberColors.textMuted, fontSize: 12.5, height: 1.45),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 22),
                   ElevatedButton.icon(
                     onPressed: widget.onExploreTrending,
-                    icon: const FaIcon(FontAwesomeIcons.fire, size: 14, color: Colors.white),
-                    label: const Text('Browse Trending Videos', style: TextStyle(fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: EmberColors.primaryBlue,
+                      backgroundColor: EmberColors.monoWhite,
+                      foregroundColor: EmberColors.onAccent,
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
+                    icon: const FaIcon(FontAwesomeIcons.fire, size: 13),
+                    label: const Text('Explore Trending', style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),
@@ -145,15 +141,13 @@ class _AuraFeedTabState extends State<AuraFeedTab> {
     }
 
     return RefreshIndicator(
-      color: EmberColors.primaryBlue,
+      color: EmberColors.monoWhite,
       backgroundColor: EmberColors.surfaceContainerHigh,
       onRefresh: () => _loadFeed(forceRefresh: true),
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 96),
         itemCount: _feedVideos.length,
-        itemBuilder: (context, index) {
-          return AuraVideoCard(video: _feedVideos[index]);
-        },
+        itemBuilder: (context, index) => AuraVideoCard(video: _feedVideos[index]),
       ),
     );
   }

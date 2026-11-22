@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../models/song.dart';
 import '../providers/player_provider.dart';
+import '../services/lyrics_service.dart';
 import '../theme/ember_theme.dart';
+import 'lyric_story_card.dart';
 
 class SynchronizedLyricsView extends StatefulWidget {
   const SynchronizedLyricsView({super.key});
@@ -15,16 +20,38 @@ class SynchronizedLyricsView extends StatefulWidget {
 
 class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
   final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _lineKeys = {};
   int _lastIndex = -1;
   bool _userScrolling = false;
   Timer? _userScrollTimer;
 
+  bool _karaokeMode = true;
+  bool _showTranslation = false;
+  bool _showRomanization = false;
+  bool _isTranslating = false;
+  bool _isRomanizing = false;
+
   String? _currentSongId;
+  List<LyricLine>? _enhancedLines;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final player = context.read<PlayerProvider>();
+        if (player.currentSong != null && player.lyrics.syncedLyrics.isEmpty && !player.isLoadingLyrics) {
+          player.loadLyricsForCurrentSong();
+        }
+      }
+    });
+  }
 
   @override
   void dispose() {
     _userScrollTimer?.cancel();
     _scrollController.dispose();
+    _lineKeys.clear();
     super.dispose();
   }
 
@@ -37,10 +64,22 @@ class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
       return;
     }
 
-    const lineEstimate = 56.0;
-    // With viewport-centered padding, offset of line index is index * lineEstimate
-    final targetOffset = index * lineEstimate;
-    final clamped = targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent);
+    final lineKey = _lineKeys[index];
+    final keyContext = lineKey?.currentContext;
+    if (keyContext != null) {
+      Scrollable.ensureVisible(
+        keyContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 380),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final ratio = totalLines > 1 ? (index / (totalLines - 1)) : 0.0;
+    final targetOffset = ratio * maxScroll;
+    final clamped = targetOffset.clamp(0.0, maxScroll);
 
     _scrollController.animateTo(
       clamped,
@@ -49,15 +88,57 @@ class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
     );
   }
 
+  Future<void> _handleToggleTranslation(List<LyricLine> sourceLines) async {
+    setState(() => _showTranslation = !_showTranslation);
+    if (_showTranslation && (_enhancedLines == null || !_enhancedLines!.any((l) => l.translation != null))) {
+      setState(() => _isTranslating = true);
+      try {
+        final translated = await LyricsService.translateLyrics(sourceLines);
+        if (mounted) {
+          setState(() {
+            _enhancedLines = translated;
+            _isTranslating = false;
+          });
+        }
+      } catch (_) {
+        if (mounted) setState(() => _isTranslating = false);
+      }
+    }
+  }
+
+  Future<void> _handleToggleRomanization(List<LyricLine> sourceLines) async {
+    setState(() => _showRomanization = !_showRomanization);
+    if (_showRomanization && (_enhancedLines == null || !_enhancedLines!.any((l) => l.romanization != null))) {
+      setState(() => _isRomanizing = true);
+      try {
+        final target = _enhancedLines ?? sourceLines;
+        final romanized = await LyricsService.romanizeLyrics(target);
+        if (mounted) {
+          setState(() {
+            _enhancedLines = romanized;
+            _isRomanizing = false;
+          });
+        }
+      } catch (_) {
+        if (mounted) setState(() => _isRomanizing = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final player = context.watch<PlayerProvider>();
-    final cur = player.currentSong;
+    final player = context.read<PlayerProvider>();
+    final cur = context.select<PlayerProvider, Song?>((p) => p.currentSong);
+    context.select<PlayerProvider, (bool, int, int)>(
+      (p) => (p.isLoadingLyrics, p.lyrics.syncedLyrics.length, p.lyrics.plainLyrics.length),
+    );
 
     if (cur != null && cur.id != _currentSongId) {
       _currentSongId = cur.id;
+      _lineKeys.clear();
       _lastIndex = -1;
       _userScrolling = false;
+      _enhancedLines = null;
     }
 
     if (cur == null) {
@@ -73,17 +154,58 @@ class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
       );
     }
 
+    if (LyricsService.isTempoModified(cur.title, cur.artist)) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: EmberColors.surfaceContainerHigh.withValues(alpha: 0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const FaIcon(FontAwesomeIcons.gaugeHigh, size: 32, color: EmberColors.textMuted),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Lyrics Unavailable for Modified-Tempo Audio',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: EmberColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Synchronized lyrics are disabled on slowed, reverb, or sped-up tracks to prevent audio timing mismatch.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: EmberColors.textMuted,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (player.isLoadingLyrics) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
+            SizedBox(
               width: 28,
               height: 28,
               child: CircularProgressIndicator(
                 strokeWidth: 2.5,
-                color: EmberColors.primaryAmber,
+                color: EmberColors.primaryBlue,
               ),
             ),
             const SizedBox(height: 16),
@@ -98,133 +220,257 @@ class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
       );
     }
 
-    final synced = player.syncedLyrics;
+    final rawSynced = player.syncedLyrics;
     final hasSynced = player.hasSyncedLyrics;
     final plain = player.plainLyrics;
+    final synced = _enhancedLines ?? rawSynced;
 
     if (hasSynced && synced.isNotEmpty) {
-      final activeIdx = player.currentLyricIndex;
-
-      if (activeIdx != _lastIndex && activeIdx >= 0) {
-        _lastIndex = activeIdx;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _scrollToIndex(activeIdx, synced.length);
+      return ValueListenableBuilder<int>(
+        valueListenable: player.activeLyricIndexNotifier,
+        builder: (context, activeIdx, _) {
+          if (activeIdx != _lastIndex && activeIdx >= 0) {
+            _lastIndex = activeIdx;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _scrollToIndex(activeIdx, synced.length);
+              }
+            });
           }
-        });
-      }
 
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final verticalCenterPadding = (constraints.maxHeight / 2) - 28.0;
-          final safeVerticalPadding = verticalCenterPadding.clamp(24.0, 500.0);
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final topPadding = (constraints.maxHeight * 0.42).clamp(40.0, 360.0);
+              final bottomPadding = (constraints.maxHeight * 0.65).clamp(120.0, 750.0);
 
-          return Stack(
-            alignment: Alignment.topCenter,
-            children: [
-              NotificationListener<UserScrollNotification>(
-                onNotification: (notif) {
-                  if (notif.direction != ScrollDirection.idle) {
-                    _userScrolling = true;
-                    _userScrollTimer?.cancel();
-                  } else {
-                    _userScrollTimer?.cancel();
-                    _userScrollTimer = Timer(const Duration(seconds: 3), () {
-                      if (mounted) _userScrolling = false;
-                    });
-                  }
-                  return false;
-                },
-                child: ListView.builder(
-              controller: _scrollController,
-              padding: EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: safeVerticalPadding,
-              ),
-              itemCount: synced.length,
-              itemBuilder: (context, index) {
-                final line = synced[index];
-                final isActive = index == activeIdx;
-
-                if (line.text.trim().isEmpty) {
-                  return const SizedBox(height: 16);
-                }
-
-                return Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      player.seek(line.timestamp);
-                      _userScrolling = false;
-                      _scrollToIndex(index, synced.length);
+              return Stack(
+                alignment: Alignment.topCenter,
+                children: [
+                  NotificationListener<UserScrollNotification>(
+                    onNotification: (notif) {
+                      if (notif.direction != ScrollDirection.idle) {
+                        _userScrolling = true;
+                        _userScrollTimer?.cancel();
+                      } else {
+                        _userScrollTimer?.cancel();
+                        _userScrollTimer = Timer(const Duration(seconds: 3), () {
+                          if (mounted) _userScrolling = false;
+                        });
+                      }
+                      return false;
                     },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? EmberColors.primaryAmber.withValues(alpha: 0.16)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(14),
-                        border: isActive
-                            ? Border.all(color: EmberColors.primaryAmber.withValues(alpha: 0.35), width: 1.2)
-                            : null,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: EdgeInsets.only(
+                        left: 20,
+                        right: 20,
+                        top: topPadding,
+                        bottom: bottomPadding,
                       ),
-                      child: Text(
-                        line.text,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: isActive
-                              ? EmberColors.primaryAmberHi
-                              : EmberColors.textPrimary.withValues(alpha: 0.4),
-                          fontSize: isActive ? 18 : 15,
-                          fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                          height: 1.5,
-                          letterSpacing: isActive ? 0.3 : 0.0,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-                ),
-              ),
-              if (player.isolationMode == IsolationMode.instrumentsOnly)
-                Positioned(
-                  top: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: EmberColors.obsidianBase.withValues(alpha: 0.85),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: EmberColors.primaryAmber.withValues(alpha: 0.6), width: 1.2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: EmberColors.primaryAmber.withValues(alpha: 0.25),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.mic_external_on_rounded, size: 13, color: EmberColors.primaryAmber),
-                        SizedBox(width: 6),
-                        Text(
-                          'KARAOKE STAGE • SING ALONG',
-                          style: TextStyle(
-                            color: EmberColors.primaryAmber,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.0,
+                      itemCount: synced.length,
+                      itemBuilder: (context, index) {
+                        final line = synced[index];
+                        final isActive = index == activeIdx;
+
+                        if (line.text.trim().isEmpty) {
+                          return const SizedBox(height: 16);
+                        }
+
+                        return Center(
+                          child: GestureDetector(
+                            onTap: () {
+                              player.seek(line.timestamp);
+                              _userScrolling = false;
+                              _scrollToIndex(index, synced.length);
+                            },
+                            onLongPress: () {
+                              HapticFeedback.heavyImpact();
+                              LyricStoryCardSheet.show(
+                                context,
+                                cur,
+                                [line],
+                                allLyrics: synced,
+                              );
+                            },
+                            child: RepaintBoundary(
+                              child: AnimatedContainer(
+                                key: _lineKeys.putIfAbsent(index, () => GlobalKey()),
+                                duration: const Duration(milliseconds: 250),
+                                margin: const EdgeInsets.symmetric(vertical: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: isActive
+                                      ? EmberColors.primaryBlue.withValues(alpha: 0.16)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: isActive
+                                      ? Border.all(color: EmberColors.primaryBlue.withValues(alpha: 0.40), width: 1.2)
+                                      : null,
+                                ),
+                                child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Romanization badge
+                                  if (_showRomanization && line.romanization != null && line.romanization!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Text(
+                                        line.romanization!,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: isActive
+                                              ? EmberColors.primaryBlue.withValues(alpha: 0.85)
+                                              : EmberColors.textMuted.withValues(alpha: 0.6),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          letterSpacing: 0.4,
+                                        ),
+                                      ),
+                                    ),
+
+                                  // Main lyric line (karaoke word sweep or standard text)
+                                  if (_karaokeMode && line.isWordSynced && isActive)
+                                    _KaraokeLineWidget(
+                                      line: line,
+                                      positionNotifier: player.positionNotifier,
+                                    )
+                                  else
+                                    Text(
+                                      line.text,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: isActive
+                                            ? EmberColors.primaryBlueHi
+                                            : EmberColors.textPrimary.withValues(alpha: 0.4),
+                                        fontSize: isActive ? 18 : 15,
+                                        fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                                        height: 1.5,
+                                        letterSpacing: isActive ? 0.3 : 0.0,
+                                      ),
+                                    ),
+
+                                  // Translation subtitle
+                                  if (_showTranslation && line.translation != null && line.translation!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        line.translation!,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: isActive
+                                              ? EmberColors.textSecondary
+                                              : EmberColors.textMuted.withValues(alpha: 0.5),
+                                          fontSize: 13,
+                                          fontStyle: FontStyle.italic,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                      ],
+                      );
+                      },
                     ),
                   ),
-                ),
-            ],
+
+                  // Floating Lyric Enhancement Pill Toolbar (Horizontally constrained & scrollable to prevent overflow)
+                  Positioned(
+                    top: 8,
+                    left: 10,
+                    right: 10,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: EmberColors.surfaceContainerLow.withValues(alpha: 0.90),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: EmberColors.outlineVariant.withValues(alpha: 0.7)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _LyricsPill(
+                                icon: Icons.mic_external_on_rounded,
+                                label: 'Karaoke',
+                                isActive: _karaokeMode,
+                                onTap: () => setState(() => _karaokeMode = !_karaokeMode),
+                              ),
+                              const SizedBox(width: 4),
+                              _LyricsPill(
+                                icon: Icons.translate_rounded,
+                                label: _isTranslating ? '...' : 'Translate',
+                                isActive: _showTranslation,
+                                onTap: () => _handleToggleTranslation(rawSynced),
+                              ),
+                              const SizedBox(width: 4),
+                              _LyricsPill(
+                                icon: Icons.spellcheck_rounded,
+                                label: _isRomanizing ? '...' : 'Romaji',
+                                isActive: _showRomanization,
+                                onTap: () => _handleToggleRomanization(rawSynced),
+                              ),
+                              const SizedBox(width: 4),
+                              _LyricsPill(
+                                icon: Icons.replay_rounded,
+                                label: '-0.5s',
+                                isActive: player.lyricsOffset < -0.05,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  player.setLyricsOffset(player.lyricsOffset - 0.5);
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              _LyricsPill(
+                                icon: Icons.forward_rounded,
+                                label: player.lyricsOffset.abs() < 0.05
+                                    ? '+0.5s'
+                                    : '${player.lyricsOffset > 0 ? '+' : ''}${player.lyricsOffset.toStringAsFixed(1)}s',
+                                isActive: player.lyricsOffset > 0.05,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  player.setLyricsOffset(player.lyricsOffset + 0.5);
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              _LyricsPill(
+                                icon: Icons.style_rounded,
+                                label: 'Story Card',
+                                isActive: false,
+                                onTap: () {
+                                  final activeLine = activeIdx >= 0 && activeIdx < synced.length ? synced[activeIdx] : (synced.isNotEmpty ? synced.first : null);
+                                  if (activeLine != null) {
+                                    HapticFeedback.mediumImpact();
+                                    LyricStoryCardSheet.show(
+                                      context,
+                                      cur,
+                                      [activeLine],
+                                      allLyrics: synced,
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           );
         },
       );
@@ -260,10 +506,145 @@ class _SynchronizedLyricsViewState extends State<SynchronizedLyricsView> {
           const SizedBox(height: 16),
           TextButton.icon(
             onPressed: () => player.retryFetchLyrics(),
-            icon: const FaIcon(FontAwesomeIcons.arrowsRotate, size: 14, color: EmberColors.primaryAmber),
-            label: const Text('Search Again', style: TextStyle(color: EmberColors.primaryAmber)),
+            icon: FaIcon(FontAwesomeIcons.arrowsRotate, size: 14, color: EmberColors.primaryBlue),
+            label: Text('Search Again', style: TextStyle(color: EmberColors.primaryBlue)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LyricsPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _LyricsPill({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isActive ? EmberColors.primaryBlue.withValues(alpha: 0.20) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isActive ? EmberColors.primaryBlue : Colors.transparent,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 12,
+              color: isActive ? EmberColors.primaryBlue : EmberColors.textMuted,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? EmberColors.primaryBlue : EmberColors.textMuted,
+                fontSize: 10.5,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KaraokeLineWidget extends StatelessWidget {
+  final LyricLine line;
+  final ValueListenable<Duration> positionNotifier;
+
+  const _KaraokeLineWidget({
+    required this.line,
+    required this.positionNotifier,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final activeStyle = TextStyle(
+      color: EmberColors.primaryBlueHi,
+      fontSize: 18,
+      fontWeight: FontWeight.w700,
+      height: 1.5,
+      letterSpacing: 0.3,
+    );
+    const inactiveStyle = TextStyle(
+      color: Color(0x66FFFFFF),
+      fontSize: 18,
+      fontWeight: FontWeight.w700,
+      height: 1.5,
+      letterSpacing: 0.3,
+    );
+
+    // Single line-level ValueListenableBuilder instead of 10-15 per-word listeners!
+    return RepaintBoundary(
+      child: ValueListenableBuilder<Duration>(
+        valueListenable: positionNotifier,
+        builder: (context, currentPos, _) {
+          final curMs = currentPos.inMilliseconds;
+          return Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: line.words.map((word) {
+              final startMs = word.timestamp.inMilliseconds;
+              final durMs = word.duration.inMilliseconds;
+              final leadMs = (durMs * 0.10).round();
+              final effectiveStart = startMs - leadMs;
+              final totalSpan = (durMs * 1.5).round();
+
+              double progress = 0.0;
+              if (curMs >= effectiveStart + totalSpan) {
+                progress = 1.0;
+              } else if (curMs > effectiveStart && totalSpan > 0) {
+                progress = ((curMs - effectiveStart) / totalSpan).clamp(0.0, 1.0);
+              }
+
+              if (progress <= 0.0) {
+                return Text(word.text, style: inactiveStyle);
+              }
+              if (progress >= 1.0) {
+                return Text(word.text, style: activeStyle);
+              }
+
+              return ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (bounds) {
+                  return LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    stops: [
+                      progress,
+                      (progress + 0.08).clamp(0.0, 1.0),
+                    ],
+                    colors: [
+                      EmberColors.primaryBlueHi,
+                      const Color(0x66FFFFFF),
+                    ],
+                  ).createShader(bounds);
+                },
+                child: Text(word.text, style: activeStyle),
+              );
+            }).toList(),
+          );
+        },
       ),
     );
   }

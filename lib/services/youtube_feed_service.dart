@@ -4,6 +4,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
 import '../models/song.dart';
 import '../models/comment.dart';
 import 'youtube_importer_service.dart';
+import 'youtube_cipher_service.dart';
 
 class VideoStreamOptions {
   final String? videoMuxedUrl;
@@ -98,7 +99,8 @@ class YouTubeFeedService {
   }
 
   /// Resolve stream options (720p/1080p muxed video & high quality audio) for video player
-  static Future<VideoStreamOptions> resolveVideoStreamOptions(String videoId) async {
+  static Future<VideoStreamOptions> resolveVideoStreamOptions(String rawVideoId) async {
+    final videoId = rawVideoId.startsWith('yt_') ? rawVideoId.substring(3) : rawVideoId;
     if (_streamOptionsCache.containsKey(videoId)) {
       return _streamOptionsCache[videoId]!;
     }
@@ -106,7 +108,8 @@ class YouTubeFeedService {
     try {
       final manifest = await _yt.videos.streamsClient.getManifest(
         videoId,
-        ytClients: [YoutubeApiClient.android, YoutubeApiClient.ios],
+        ytClients: [YoutubeApiClient.android, YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
+        requireWatchPage: false,
       );
 
       final Map<String, String> qualities = {};
@@ -116,11 +119,11 @@ class YouTubeFeedService {
       // Extract muxed streams (contains both video and audio - ideal for video_player)
       final muxedStreams = manifest.muxed.sortByVideoQuality();
       if (muxedStreams.isNotEmpty) {
-        bestMuxedUrl = muxedStreams.first.url.toString();
+        bestMuxedUrl = await YouTubeCipherService.unthrottleUrl(muxedStreams.first.url.toString());
         for (final s in muxedStreams) {
           final label = s.qualityLabel;
           if (!qualities.containsKey(label)) {
-            qualities[label] = s.url.toString();
+            qualities[label] = await YouTubeCipherService.unthrottleUrl(s.url.toString());
           }
         }
       }
@@ -128,7 +131,7 @@ class YouTubeFeedService {
       // Extract audio-only stream (for background listening / listen mode)
       final audioStreams = manifest.audioOnly.sortByBitrate();
       if (audioStreams.isNotEmpty) {
-        bestAudioUrl = audioStreams.first.url.toString();
+        bestAudioUrl = await YouTubeCipherService.unthrottleUrl(audioStreams.first.url.toString());
       } else if (bestMuxedUrl != null) {
         bestAudioUrl = bestMuxedUrl;
       }
@@ -156,10 +159,19 @@ class YouTubeFeedService {
     }
   }
 
+  static String cleanVideoId(String raw) {
+    final s = raw.trim();
+    if (s.startsWith('yt_')) return s.substring(3);
+    final extracted = YouTubeImporterService.extractVideoId(s);
+    if (extracted != null && extracted.isNotEmpty) return extracted;
+    return s;
+  }
+
   /// Fetch full video details (description, channel, views)
   static Future<Song> enrichVideoDetails(Song song) async {
     try {
-      final video = await _yt.videos.get(song.id);
+      final vid = cleanVideoId(song.id);
+      final video = await _yt.videos.get(vid);
       return song.copyWith(
         title: video.title,
         artist: video.author,
@@ -170,7 +182,7 @@ class YouTubeFeedService {
         uploadDateFormatted: video.uploadDate?.toIso8601String().split('T').first,
         artworkUrl: video.thumbnails.highResUrl.isNotEmpty
             ? video.thumbnails.highResUrl
-            : 'https://i.ytimg.com/vi/${song.id}/maxresdefault.jpg',
+            : 'https://i.ytimg.com/vi/$vid/maxresdefault.jpg',
       );
     } catch (e) {
       debugPrint('[YouTubeFeedService] enrichVideoDetails error: $e');
@@ -181,7 +193,8 @@ class YouTubeFeedService {
   /// Fetch real YouTube comments
   static Future<List<AuraComment>> fetchComments(String videoId, {int limit = 30}) async {
     try {
-      final video = await _yt.videos.get(videoId);
+      final vid = cleanVideoId(videoId);
+      final video = await _yt.videos.get(vid);
       // ignore: deprecated_member_use
       final commentsList = await _yt.videos.commentsClient.getComments(video);
       if (commentsList == null) return [];
@@ -209,8 +222,9 @@ class YouTubeFeedService {
 
   /// Fetch related videos
   static Future<List<Song>> fetchRelatedVideos(String videoId, {int limit = 20}) async {
+    final vid = cleanVideoId(videoId);
     try {
-      final video = await _yt.videos.get(videoId);
+      final video = await _yt.videos.get(vid);
       final related = await _yt.videos.getRelatedVideos(video);
       if (related != null && related.isNotEmpty) {
         final List<Song> list = [];
@@ -238,7 +252,7 @@ class YouTubeFeedService {
 
     // Fallback: search video author or title
     try {
-      return await YouTubeImporterService.searchYouTube('More from $videoId', limit: limit);
+      return await YouTubeImporterService.searchYouTube('More from $vid', limit: limit);
     } catch (_) {
       return [];
     }

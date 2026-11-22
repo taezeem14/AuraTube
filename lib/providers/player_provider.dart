@@ -13,6 +13,10 @@ import '../services/youtube_importer_service.dart';
 import '../services/stream_resolver_service.dart';
 import '../services/stem_service.dart';
 import '../services/smart_radio_service.dart';
+import '../services/sponsorblock_service.dart';
+import '../services/local_music_service.dart';
+import '../services/gesture_service.dart';
+import '../services/youtube_cipher_service.dart';
 
 enum IsolationMode {
   none,
@@ -105,6 +109,75 @@ class PlayerProvider extends ChangeNotifier {
   Song? _lastFailedSong;
   Song? get lastFailedSong => _lastFailedSong;
   final ValueNotifier<Song?> playbackErrorNotifier = ValueNotifier<Song?>(null);
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier<Duration>(Duration.zero);
+  final ValueNotifier<int> activeLyricIndexNotifier = ValueNotifier<int>(-1);
+
+  // Metrolist & Sine Audio DSP Controls
+  double _pitch = 1.0;
+  bool _skipSilence = false;
+  bool _loudnessNormalization = false;
+  bool _clippingProtection = true;
+  double _lyricsOffset = 0.0;
+  bool _shakeToSkip = false;
+  bool _flipToPause = false;
+
+  double get pitch => _pitch;
+  bool get skipSilence => _skipSilence;
+  bool get loudnessNormalization => _loudnessNormalization;
+  bool get clippingProtection => _clippingProtection;
+  double get lyricsOffset => _lyricsOffset;
+  bool get shakeToSkip => _shakeToSkip;
+  bool get flipToPause => _flipToPause;
+
+  // SponsorBlock State & Telemetry
+  bool _sponsorBlockEnabled = true;
+  Set<String> _sponsorBlockCategories = {
+    'sponsor', 'selfpromo', 'intro', 'outro', 'interaction', 'music_offtopic',
+  };
+  int _sponsorSegmentsSkipped = 0;
+  double _sponsorSecondsSaved = 0.0;
+
+  bool get sponsorBlockEnabled => _sponsorBlockEnabled;
+  Set<String> get sponsorBlockCategories => Set.unmodifiable(_sponsorBlockCategories);
+  int get sponsorSegmentsSkipped => _sponsorSegmentsSkipped;
+  double get sponsorSecondsSaved => _sponsorSecondsSaved;
+  List<SponsorSegment> get activeSponsorSegments => _audioHandler.activeSponsorSegments;
+
+  // Local Music Scanner & Audile Recognition History
+  List<Song> _localSongs = [];
+  bool _isLoadingLocal = false;
+  List<Map<String, dynamic>> _recognitionHistory = [];
+
+  List<Song> get localSongs => _localSongs;
+  bool get isLoadingLocal => _isLoadingLocal;
+  List<Map<String, dynamic>> get recognitionHistory => _recognitionHistory;
+
+  // Metrolist Listening Insights & Telemetry
+  int _totalListeningSeconds = 0;
+  Map<String, int> _playCounts = {};
+  Map<String, int> _artistPlayCounts = {};
+  int _unsavedListenTicks = 0;
+
+  int get totalListeningSeconds => _totalListeningSeconds;
+  Map<String, int> get playCounts => Map.unmodifiable(_playCounts);
+  Map<String, int> get artistPlayCounts => Map.unmodifiable(_artistPlayCounts);
+
+  List<MapEntry<String, int>> get topArtists {
+    final list = _artistPlayCounts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return list.take(10).toList();
+  }
+
+  List<Song> get topSongs {
+    final known = <String, Song>{};
+    for (final s in [..._history, ..._favorites, ..._queue]) {
+      known[s.id] = s;
+    }
+    final ranked = _playCounts.entries
+        .where((e) => known.containsKey(e.key))
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.take(10).map((e) => known[e.key]!).toList();
+  }
 
   Timer? _sleepTimer;
   int _sleepSecondsRemaining = 0;
@@ -195,7 +268,8 @@ class PlayerProvider extends ChangeNotifier {
 
   int get currentLyricIndex {
     if (_lyrics.syncedLyrics.isEmpty) return -1;
-    final pos = _position;
+    final adjustedMs = _position.inMilliseconds + (_lyricsOffset * 1000).round();
+    final pos = Duration(milliseconds: adjustedMs < 0 ? 0 : adjustedMs);
     for (int i = _lyrics.syncedLyrics.length - 1; i >= 0; i--) {
       if (pos >= _lyrics.syncedLyrics[i].timestamp) {
         return i;
@@ -205,6 +279,7 @@ class PlayerProvider extends ChangeNotifier {
   }
 
   void _init() {
+    unawaited(YouTubeCipherService.initialize());
     _favorites = _storageService.loadFavorites();
     _history = _storageService.loadHistory();
     _playlists = _storageService.loadPlaylists();
@@ -217,6 +292,45 @@ class PlayerProvider extends ChangeNotifier {
     _bassBoost = _storageService.loadBassBoost();
     _bandGains = _storageService.loadBandGains();
     _isAutoplayEnabled = _storageService.loadAutoplayEnabled();
+
+    // Load Metrolist, SponsorBlock, Audile & Gesture preferences
+    _pitch = _storageService.loadPitch();
+    _skipSilence = _storageService.loadSkipSilence();
+    _loudnessNormalization = _storageService.loadLoudnessNormalization();
+    _clippingProtection = _storageService.loadClippingProtection();
+    _lyricsOffset = _storageService.loadLyricsOffset();
+    _shakeToSkip = _storageService.loadShakeToSkip();
+    _flipToPause = _storageService.loadFlipToPause();
+    _sponsorBlockEnabled = _storageService.loadSponsorBlockEnabled();
+    _sponsorBlockCategories = _storageService.loadSponsorBlockCategories();
+    _sponsorSegmentsSkipped = _storageService.loadSponsorSegmentsSkipped();
+    _sponsorSecondsSaved = _storageService.loadSponsorSecondsSaved();
+    _recognitionHistory = _storageService.loadRecognitionHistory();
+    _totalListeningSeconds = _storageService.loadTotalListeningSeconds();
+    _playCounts = _storageService.loadPlayCounts();
+    _artistPlayCounts = _storageService.loadArtistPlayCounts();
+
+    SponsorBlockService.instance.configure(
+      enabled: _sponsorBlockEnabled,
+      categories: _sponsorBlockCategories,
+    );
+
+    _audioHandler.onSponsorSkipped = (segment) {
+      recordSponsorSkip(segment.durationSeconds);
+    };
+
+    AuraGestureService.init(
+      onShakeSkip: () {
+        if (_shakeToSkip && _queue.isNotEmpty) skipNext();
+      },
+      onFlipPause: () {
+        if (_flipToPause && _isPlaying) pause();
+      },
+    );
+    AuraGestureService.configure(
+      shakeToSkip: _shakeToSkip,
+      flipToPause: _flipToPause,
+    );
 
     // Wire up hardware / notification / completion navigation callbacks
     _audioHandler.setNavigationCallbacks(
@@ -252,21 +366,23 @@ class PlayerProvider extends ChangeNotifier {
       },
     );
 
-    // Apply saved EQ preset & settings
-    _audioHandler.setEqualizerEnabled(_eqEnabled);
-    _audioHandler.setBassBoost(_bassBoost);
-    _audioHandler.applyEqualizerPreset(_eqPreset);
+    // Apply saved EQ preset & settings atomically
+    _audioHandler.setClippingProtection(_clippingProtection);
+    _audioHandler.setLoudnessNormalizationEnabled(_loudnessNormalization);
+    _audioHandler.setSkipSilenceEnabled(_skipSilence);
+    _audioHandler.setPitch(_pitch);
+    _audioHandler.configureEqualizer(
+      enabled: _eqEnabled,
+      preset: _eqPreset,
+      customGains: _bandGains,
+      bassBoost: _bassBoost,
+    );
     _audioHandler.setSpeed(_speed);
     _audioHandler.setPlayerRepeatMode(_repeatMode);
     if (_eqPreset == 'Vocals Only') {
       _isolationMode = IsolationMode.vocalsOnly;
     } else if (_eqPreset == 'Instruments Only') {
       _isolationMode = IsolationMode.instrumentsOnly;
-    }
-    if (_eqPreset == 'Custom' && _bandGains.isNotEmpty) {
-      for (final entry in _bandGains.entries) {
-        _audioHandler.setBandGain(entry.key, entry.value);
-      }
     }
 
     // Ensure all restored lists are completely free of legacy mock/placeholder tracks
@@ -295,9 +411,27 @@ class PlayerProvider extends ChangeNotifier {
     _posSub = _audioHandler.player.positionStream.listen((pos) {
       if (_isScrubbing) return;
       _position = pos;
+      final adjustedMs = pos.inMilliseconds + (_lyricsOffset * 1000).round();
+      positionNotifier.value = Duration(milliseconds: adjustedMs < 0 ? 0 : adjustedMs);
+      final lyricIdx = currentLyricIndex;
+      if (activeLyricIndexNotifier.value != lyricIdx) {
+        activeLyricIndexNotifier.value = lyricIdx;
+      }
+
       final now = DateTime.now();
-      if (pos.inSeconds != lastNotifiedSec || now.difference(lastNotifyTime).inMilliseconds >= 300) {
+      if (pos.inSeconds != lastNotifiedSec) {
+        if (_isPlaying && lastNotifiedSec >= 0 && (pos.inSeconds - lastNotifiedSec).abs() <= 2) {
+          _totalListeningSeconds++;
+          _unsavedListenTicks++;
+          if (_unsavedListenTicks >= 10) {
+            _unsavedListenTicks = 0;
+            _storageService.saveTotalListeningSeconds(_totalListeningSeconds);
+          }
+        }
         lastNotifiedSec = pos.inSeconds;
+        lastNotifyTime = now;
+        notifyListeners();
+      } else if (now.difference(lastNotifyTime).inMilliseconds >= 300) {
         lastNotifyTime = now;
         notifyListeners();
       }
@@ -1293,15 +1427,27 @@ class PlayerProvider extends ChangeNotifier {
   }
 
   // Equalizer
-  Future<void> setEqualizerPreset(String preset) async {
+  Future<void> setEqualizerPreset(String preset, {List<double>? presetGains}) async {
     _eqPreset = preset;
     if (preset != 'Vocals Only' && preset != 'Instruments Only') {
       _isolationMode = IsolationMode.none;
     }
+    if (presetGains != null && presetGains.isNotEmpty) {
+      for (int i = 0; i < presetGains.length; i++) {
+        _bandGains[i] = presetGains[i];
+      }
+      await _storageService.saveBandGains(_bandGains);
+    }
     await _storageService.saveEqualizerPreset(preset);
-    await _audioHandler.applyEqualizerPreset(preset);
+    await _audioHandler.configureEqualizer(
+      enabled: _eqEnabled,
+      preset: preset,
+      customGains: presetGains != null ? _bandGains : null,
+    );
     notifyListeners();
   }
+
+  Future<void> loadLyricsForCurrentSong() => retryFetchLyrics();
 
   Future<void> toggleIsolationMode(IsolationMode mode) async {
     if (_isolationMode == mode) {
@@ -1501,6 +1647,168 @@ class PlayerProvider extends ChangeNotifier {
     _history.insert(0, song);
     if (_history.length > 200) _history.removeLast();
     _storageService.saveHistory(_history);
+
+    // Update Metrolist Listening Insights play counts
+    _playCounts[song.id] = (_playCounts[song.id] ?? 0) + 1;
+    if (song.artist.trim().isNotEmpty) {
+      final cleanArtist = song.artist.trim();
+      _artistPlayCounts[cleanArtist] = (_artistPlayCounts[cleanArtist] ?? 0) + 1;
+    }
+    _storageService.savePlayCounts(_playCounts);
+    _storageService.saveArtistPlayCounts(_artistPlayCounts);
+  }
+
+  // =========================================================================
+  // Metrolist Audio Controls (Pitch, Skip Silence, Normalization, Lyrics Sync)
+  // =========================================================================
+  Future<void> setPitch(double val) async {
+    _pitch = val.clamp(0.5, 2.0);
+    await _storageService.savePitch(_pitch);
+    await _audioHandler.setPitch(_pitch);
+    notifyListeners();
+  }
+
+  Future<void> setSkipSilence(bool enabled) async {
+    _skipSilence = enabled;
+    await _storageService.saveSkipSilence(enabled);
+    await _audioHandler.setSkipSilenceEnabled(enabled);
+    notifyListeners();
+  }
+
+  Future<void> setLoudnessNormalization(bool enabled) async {
+    _loudnessNormalization = enabled;
+    await _storageService.saveLoudnessNormalization(enabled);
+    await _audioHandler.setLoudnessNormalizationEnabled(enabled);
+    notifyListeners();
+  }
+
+  Future<void> setClippingProtection(bool enabled) async {
+    _clippingProtection = enabled;
+    await _storageService.saveClippingProtection(enabled);
+    await _audioHandler.setClippingProtection(enabled);
+    notifyListeners();
+  }
+
+  Future<void> setLyricsOffset(double seconds) async {
+    _lyricsOffset = seconds.clamp(-5.0, 5.0);
+    await _storageService.saveLyricsOffset(_lyricsOffset);
+    notifyListeners();
+  }
+
+  Future<void> setShakeToSkip(bool enabled) async {
+    _shakeToSkip = enabled;
+    await _storageService.saveShakeToSkip(enabled);
+    await AuraGestureService.configure(shakeToSkip: _shakeToSkip, flipToPause: _flipToPause);
+    notifyListeners();
+  }
+
+  Future<void> setFlipToPause(bool enabled) async {
+    _flipToPause = enabled;
+    await _storageService.saveFlipToPause(enabled);
+    await AuraGestureService.configure(shakeToSkip: _shakeToSkip, flipToPause: _flipToPause);
+    notifyListeners();
+  }
+
+  // =========================================================================
+  // SponsorBlock Category Controls & Telemetry
+  // =========================================================================
+  Future<void> toggleSponsorBlock(bool enabled) async {
+    _sponsorBlockEnabled = enabled;
+    await _storageService.saveSponsorBlockEnabled(enabled);
+    SponsorBlockService.instance.configure(
+      enabled: _sponsorBlockEnabled,
+      categories: _sponsorBlockCategories,
+    );
+    notifyListeners();
+  }
+
+  Future<void> toggleSponsorBlockCategory(String category) async {
+    if (_sponsorBlockCategories.contains(category)) {
+      _sponsorBlockCategories.remove(category);
+    } else {
+      _sponsorBlockCategories.add(category);
+    }
+    await _storageService.saveSponsorBlockCategories(_sponsorBlockCategories);
+    SponsorBlockService.instance.configure(
+      enabled: _sponsorBlockEnabled,
+      categories: _sponsorBlockCategories,
+    );
+    notifyListeners();
+  }
+
+  void recordSponsorSkip(double secondsSaved) {
+    _sponsorSegmentsSkipped++;
+    _sponsorSecondsSaved += secondsSaved;
+    _storageService.saveSponsorSegmentsSkipped(_sponsorSegmentsSkipped);
+    _storageService.saveSponsorSecondsSaved(_sponsorSecondsSaved);
+    notifyListeners();
+  }
+
+  // =========================================================================
+  // Local Device Audio Scanner & Audile Recognition History
+  // =========================================================================
+  Future<void> scanLocalMusic() async {
+    _isLoadingLocal = true;
+    notifyListeners();
+    try {
+      _localSongs = await LocalMusicService.scanDeviceAudioFiles();
+    } catch (e) {
+      debugPrint('[PlayerProvider] scanLocalMusic error: $e');
+    } finally {
+      _isLoadingLocal = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> addRecognitionRecord({
+    required String title,
+    required String artist,
+    required String album,
+    required String artworkUrl,
+    String? songId,
+  }) async {
+    _recognitionHistory.insert(0, {
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'artworkUrl': artworkUrl,
+      'songId': songId ?? '',
+      'recognizedAt': DateTime.now().toIso8601String(),
+    });
+    if (_recognitionHistory.length > 100) {
+      _recognitionHistory = _recognitionHistory.take(100).toList();
+    }
+    await _storageService.saveRecognitionHistory(_recognitionHistory);
+    notifyListeners();
+  }
+
+  Future<void> clearRecognitionHistory() async {
+    _recognitionHistory.clear();
+    await _storageService.saveRecognitionHistory([]);
+    notifyListeners();
+  }
+
+  // =========================================================================
+  // Full Backup Export & Restore
+  // =========================================================================
+  String exportBackup() => _storageService.exportFullBackupJson();
+
+  Future<bool> importBackup(String rawJson) async {
+    final ok = await _storageService.importFullBackupJson(rawJson);
+    if (ok) {
+      _favorites = _storageService.loadFavorites();
+      _history = _storageService.loadHistory();
+      _playlists = _storageService.loadPlaylists();
+      _recognitionHistory = _storageService.loadRecognitionHistory();
+      _sponsorBlockEnabled = _storageService.loadSponsorBlockEnabled();
+      _sponsorBlockCategories = _storageService.loadSponsorBlockCategories();
+      SponsorBlockService.instance.configure(
+        enabled: _sponsorBlockEnabled,
+        categories: _sponsorBlockCategories,
+      );
+      notifyListeners();
+    }
+    return ok;
   }
 
   Future<void> clearHistory() async {
@@ -1599,10 +1907,15 @@ class PlayerProvider extends ChangeNotifier {
       }
       if (_sleepSecondsRemaining > 0) {
         _sleepSecondsRemaining--;
+        // Smooth 10-second gentle volume fade-out before pausing (Metrolist/Sine)
+        if (_sleepSecondsRemaining <= 10 && _sleepSecondsRemaining > 0) {
+          _audioHandler.setSleepFadeMultiplier(_sleepSecondsRemaining / 10.0);
+        }
         if (!_isDisposed) notifyListeners();
       } else {
         cancelSleepTimer();
         _audioHandler.pause();
+        _audioHandler.resetSleepFade();
       }
     });
   }
@@ -1611,6 +1924,7 @@ class PlayerProvider extends ChangeNotifier {
     _sleepTimer?.cancel();
     _sleepTimer = null;
     _sleepSecondsRemaining = 0;
+    _audioHandler.resetSleepFade();
     notifyListeners();
   }
 
@@ -1619,6 +1933,8 @@ class PlayerProvider extends ChangeNotifier {
     _isDisposed = true;
     _audioHandler.setNavigationCallbacks();
     playbackErrorNotifier.dispose();
+    positionNotifier.dispose();
+    activeLyricIndexNotifier.dispose();
     _posSub?.cancel();
     _durSub?.cancel();
     _stateSub?.cancel();

@@ -44,6 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Local NewPipe reference repository (kept locally for architecture reference)
+# Local NewPipe & reference repositories (kept locally for architecture reference)
 New-pipe-repo/
+reference-repos/
 *.apk

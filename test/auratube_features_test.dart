@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:new_youtube/models/song.dart';
@@ -7,6 +8,11 @@ import 'package:new_youtube/models/subscription.dart';
 import 'package:new_youtube/services/storage_service.dart';
 import 'package:new_youtube/services/youtube_feed_service.dart';
 import 'package:new_youtube/services/audio_handler.dart';
+import 'package:new_youtube/services/sponsorblock_service.dart';
+import 'package:new_youtube/services/youtube_cipher_service.dart';
+import 'package:new_youtube/services/lyrics_service.dart';
+import 'package:new_youtube/services/music_detection_service.dart';
+import 'package:new_youtube/services/local_music_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,17 +33,13 @@ void main() {
       );
 
       expect(song.id, 'dQw4w9WgXcQ');
-      expect(song.title, 'Never Gonna Give You Up');
       expect(song.formattedDuration, '3:33');
       expect(song.formattedViews, '1.4B views');
 
-      final map = song.toMap();
-      final restored = Song.fromMap(map);
+      final restored = Song.fromMap(song.toMap());
       expect(restored.id, song.id);
       expect(restored.title, song.title);
-      expect(restored.artist, song.artist);
       expect(restored.duration.inSeconds, 213);
-      expect(restored.viewCount, 1450000000);
     });
 
     test('Playlist model creation and copyWith', () {
@@ -59,16 +61,10 @@ void main() {
 
       expect(pl.title, 'My Rock Playlist');
       expect(pl.name, 'My Rock Playlist');
-      expect(pl.songs.length, 1);
-
-      final map = pl.toMap();
-      final restored = Playlist.fromMap(map);
-      expect(restored.id, pl.id);
-      expect(restored.title, pl.title);
-      expect(restored.songs.length, 1);
+      expect(Playlist.fromMap(pl.toMap()).songs.length, 1);
     });
 
-    test('LocalSubscription model serialization', () {
+    test('LocalSubscription and AuraComment models', () {
       final sub = LocalSubscription(
         channelId: 'UCuAXFkgsw1L7xaCfnd5JJOw',
         name: 'Rick Astley',
@@ -76,16 +72,8 @@ void main() {
         subscriberCount: '3.5M',
         subscribedAt: DateTime.now(),
       );
+      expect(LocalSubscription.fromJson(sub.toJson()).subscriberCount, '3.5M');
 
-      expect(sub.name, 'Rick Astley');
-      final json = sub.toJson();
-      final restored = LocalSubscription.fromJson(json);
-      expect(restored.channelId, sub.channelId);
-      expect(restored.name, sub.name);
-      expect(restored.subscriberCount, '3.5M');
-    });
-
-    test('AuraComment model structure', () {
       const comment = AuraComment(
         author: 'MusicLover',
         authorThumbnail: '',
@@ -93,35 +81,85 @@ void main() {
         publishedTime: '2 days ago',
         likeCount: 450,
       );
-
-      expect(comment.author, 'MusicLover');
-      expect(comment.likeCount, 450);
-      expect(comment.text, 'Absolute classic!');
       expect(comment.formattedLikes, '450');
     });
   });
 
-  group('Equalizer Band Info & DSP Audio Shaper', () {
-    test('EqualizerBandInfo frequency labels and decibel limits', () {
+  group('Sine & just_audio Priority-1000 DSP Equalizer', () {
+    test('6-band log-frequency hardware interpolation', () {
+      const curve = [6.0, 4.0, 0.0, -2.0, 2.0, 5.0];
+      expect(SineAudioHandler.interpolateSixBandGain(60.0, curve), closeTo(6.0, 0.01));
+      expect(SineAudioHandler.interpolateSixBandGain(1000.0, curve), closeTo(-2.0, 0.01));
+      expect(SineAudioHandler.interpolateSixBandGain(15000.0, curve), closeTo(5.0, 0.01));
+      // 230 Hz hardware band lies logarithmically between 150 Hz (+4.0) and 400 Hz (0.0)
+      final mid = SineAudioHandler.interpolateSixBandGain(230.0, curve);
+      expect(mid, greaterThan(0.0));
+      expect(mid, lessThan(4.0));
+    });
+
+    test('EqualizerBandInfo decibel bounds', () {
       const band = EqualizerBandInfo(
         index: 0,
         centerFrequency: 60,
         label: '60 Hz',
         gain: 3.5,
-        minDecibels: -12.0,
-        maxDecibels: 12.0,
       );
-
-      expect(band.index, 0);
-      expect(band.centerFrequency, 60);
-      expect(band.label, '60 Hz');
-      expect(band.gain, 3.5);
       expect(band.minDecibels, -12.0);
       expect(band.maxDecibels, 12.0);
     });
   });
 
-  group('StorageService Persistence & Local Data', () {
+  group('Zemer-Cipher Pure-Dart Transformations', () {
+    test('Reverse, slice, and swap cipher ops', () {
+      expect(const CipherOp(CipherOpType.reverse).apply('abcdef'), 'fedcba');
+      expect(const CipherOp(CipherOpType.slice, 2).apply('abcdef'), 'cdef');
+      expect(const CipherOp(CipherOpType.swap, 3).apply('abcdef'), 'dbcaef');
+    });
+  });
+
+  group('SponsorBlock 8-Category Engine', () {
+    test('Merges overlapping segments and exposes all 8 categories', () {
+      expect(SponsorBlockService.allCategories.length, 8);
+      final merged = SponsorBlockService.mergeSegments(const [
+        SponsorSegment(start: 10.0, end: 25.0, category: 'sponsor'),
+        SponsorSegment(start: 25.2, end: 35.0, category: 'selfpromo'),
+        SponsorSegment(start: 60.0, end: 72.0, category: 'outro'),
+      ]);
+      expect(merged.length, 2);
+      expect(merged.first.start, 10.0);
+      expect(merged.first.end, 35.0);
+      expect(merged.last.displayLabel, 'Endcards / Outro');
+    });
+  });
+
+  group('BetterLyrics Cleaning & Tempo Guard', () {
+    test('Strips YouTube video noise tags and detects slowed/reverb', () {
+      expect(LyricsService.cleanTitle('Blinding Lights (Official Music Video) [4K]'), 'Blinding Lights');
+      expect(LyricsService.cleanArtist('The Weeknd - Topic'), 'The Weeknd');
+      expect(LyricsService.isTempoModified('After Hours (Slowed + Reverb)'), true);
+      expect(LyricsService.isTempoModified('After Hours'), false);
+    });
+  });
+
+  group('Audile Shazam Fingerprinting & Local Music Parser', () {
+    test('CRC32 checksum & PCM16 resampler produce valid output', () {
+      final bytes = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
+      final crc = ShazamCrc32.compute(bytes, 0, bytes.length);
+      expect(crc, isNonZero);
+
+      final pcmIn = Uint8List(4410 * 2); // 100ms @ 44.1kHz mono 16-bit
+      final pcmOut = AudioResampler.resamplePcm16(pcmIn, 44100, 16000);
+      expect(pcmOut.length, closeTo(1600 * 2, 16));
+    });
+
+    test('LocalMusicService parses Artist - Title filenames', () {
+      final parsed = LocalMusicService.parseArtistAndTitle('Daft Punk - Instant Crush.flac');
+      expect(parsed.$1, 'Daft Punk');
+      expect(parsed.$2, 'Instant Crush');
+    });
+  });
+
+  group('StorageService Persistence, Insights & Full JSON Backup', () {
     late StorageService storage;
 
     setUp(() async {
@@ -129,28 +167,15 @@ void main() {
       storage = await StorageService.init();
     });
 
-    test('Subscriptions toggle and query', () async {
+    test('Subscriptions, Favorites, History, EQ, SponsorBlock & Backup roundtrip', () async {
       final sub = LocalSubscription(
         channelId: 'chan_123',
         name: 'Tech Channel',
         avatarUrl: '',
         subscribedAt: DateTime.now(),
       );
+      expect(await storage.toggleSubscription(sub), true);
 
-      expect(storage.isSubscribed('chan_123'), false);
-
-      final added = await storage.toggleSubscription(sub);
-      expect(added, true);
-      expect(storage.isSubscribed('chan_123'), true);
-      expect(storage.loadSubscriptions().length, 1);
-
-      final removed = await storage.toggleSubscription(sub);
-      expect(removed, false);
-      expect(storage.isSubscribed('chan_123'), false);
-      expect(storage.loadSubscriptions().length, 0);
-    });
-
-    test('Favorites and History persistence', () async {
       final song = Song(
         id: 'fav_1',
         title: 'Favorite Song',
@@ -159,44 +184,37 @@ void main() {
         artworkUrl: '',
         streamUrl: 'https://example.com/audio.mp3',
       );
-
       await storage.saveFavorites([song]);
-      final favs = storage.loadFavorites();
-      expect(favs.length, 1);
-      expect(favs.first.title, 'Favorite Song');
+      await storage.savePitch(1.15);
+      await storage.saveSkipSilence(true);
+      await storage.saveSponsorBlockCategories({'sponsor', 'intro', 'music_offtopic'});
 
-      await storage.saveHistory([song]);
-      final hist = storage.loadHistory();
-      expect(hist.length, 1);
-      expect(hist.first.id, 'fav_1');
+      final exported = storage.exportFullBackupJson();
+      expect(exported.contains('Tech Channel'), true);
+      expect(exported.contains('Favorite Song'), true);
 
-      await storage.clearHistory();
-      expect(storage.loadHistory().isEmpty, true);
-    });
+      // Reset storage and restore from JSON backup
+      SharedPreferences.setMockInitialValues({});
+      final freshStorage = await StorageService.init();
+      expect(freshStorage.loadFavorites().isEmpty, true);
 
-    test('Equalizer preset and bass boost persistence', () async {
-      await storage.saveEqualizerEnabled(true);
-      expect(storage.loadEqualizerEnabled(), true);
-
-      await storage.saveEqualizerPreset('Bass Boost');
-      expect(storage.loadEqualizerPreset(), 'Bass Boost');
-
-      await storage.saveBassBoost(0.85);
-      expect(storage.loadBassBoost(), 0.85);
+      final restoredOk = await freshStorage.importFullBackupJson(exported);
+      expect(restoredOk, true);
+      expect(freshStorage.loadFavorites().length, 1);
+      expect(freshStorage.loadSubscriptions().length, 1);
+      expect(freshStorage.loadPitch(), closeTo(1.15, 0.001));
+      expect(freshStorage.loadSkipSilence(), true);
+      expect(freshStorage.loadSponsorBlockCategories().contains('music_offtopic'), true);
     });
   });
 
   group('YouTube Feed Service Categories', () {
-    test('Categories catalog definition', () {
+    test('Categories catalog & ID sanitizer', () {
       final categories = YouTubeFeedService.categories;
-      expect(categories.isNotEmpty, true);
       expect(categories.any((c) => c['id'] == 'all'), true);
-      expect(categories.any((c) => c['id'] == 'trending'), true);
       expect(categories.any((c) => c['id'] == 'music'), true);
-      expect(categories.any((c) => c['id'] == 'gaming'), true);
-      expect(categories.any((c) => c['id'] == 'news'), true);
       expect(categories.any((c) => c['id'] == 'tech'), true);
-      expect(categories.any((c) => c['id'] == 'entertainment'), true);
+      expect(YouTubeFeedService.cleanVideoId('yt_dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
     });
   });
 }

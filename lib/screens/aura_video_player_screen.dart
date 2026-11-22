@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -10,12 +11,16 @@ import '../models/comment.dart';
 import '../models/subscription.dart';
 import '../providers/player_provider.dart';
 import '../services/youtube_feed_service.dart';
+import '../services/sponsorblock_service.dart';
 import '../services/storage_service.dart';
 import '../services/download_service.dart';
 import '../theme/ember_theme.dart';
 import '../widgets/ambient_glow.dart';
 import '../widgets/vinyl_disc.dart';
-import 'sound_shaping_sheet.dart';
+import '../widgets/synchronized_lyrics_view.dart';
+import 'equalizer_screen.dart';
+import 'lyrics_sheet.dart';
+import 'playback_speed_sheet.dart';
 import 'track_options_sheet.dart';
 
 class AuraVideoPlayerScreen extends StatefulWidget {
@@ -51,12 +56,14 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
   bool _isLoadingComments = true;
   VideoStreamOptions? _streamOptions;
   String _selectedQuality = '720p';
+  List<SponsorSegment> _sponsorSegments = [];
+  final Set<String> _skippedSponsorKeys = {};
 
   @override
   void initState() {
     super.initState();
     _currentVideo = widget.video;
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _checkSubscriptionStatus();
     _loadVideo();
     _loadMetadata();
@@ -75,27 +82,46 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
       _isLoadingVideo = true;
       _hasVideoError = false;
       _errorMessage = '';
+      _sponsorSegments = [];
+      _skippedSponsorKeys.clear();
     });
 
     try {
-      // 1. Resolve video stream options (720p/1080p muxed video & audio)
-      _streamOptions = await YouTubeFeedService.resolveVideoStreamOptions(_currentVideo.id);
-
-      final videoUrl = _streamOptions?.videoMuxedUrl ?? _streamOptions?.audioOnlyUrl;
-      if (videoUrl == null || videoUrl.isEmpty) {
-        throw Exception('No playable video stream found for this video.');
-      }
-
-      // Dispose previous controller if any
       await _controller?.dispose();
 
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(videoUrl),
-        httpHeaders: {
-          'User-Agent': 'com.google.android.youtube/20.10.38 (Linux; U; Android 11)',
-          'Accept': '*/*',
-        },
-      );
+      // Check for offline local downloaded MP4/WebM file first
+      final localPath = _currentVideo.videoStreamUrl ?? _currentVideo.streamUrl;
+      final isLocalFile = localPath.isNotEmpty &&
+          !localPath.startsWith('http://') &&
+          !localPath.startsWith('https://') &&
+          File(localPath).existsSync();
+
+      if (isLocalFile) {
+        _controller = VideoPlayerController.file(File(localPath));
+      } else {
+        // 1. Resolve unthrottled Zemer-Cipher + YoutubeExplode stream options
+        _streamOptions = await YouTubeFeedService.resolveVideoStreamOptions(_currentVideo.id);
+        final videoUrl = _streamOptions?.videoMuxedUrl ?? _streamOptions?.audioOnlyUrl;
+        if (videoUrl == null || videoUrl.isEmpty) {
+          throw Exception('No playable video stream found for this video.');
+        }
+
+        _controller = VideoPlayerController.networkUrl(
+          Uri.parse(videoUrl),
+          httpHeaders: {
+            'User-Agent': 'com.google.android.youtube/20.10.38 (Linux; U; Android 11)',
+            'Accept': '*/*',
+          },
+        );
+
+        // Fetch SponsorBlock skip segments in parallel
+        final cleanId = YouTubeFeedService.cleanVideoId(_currentVideo.id);
+        SponsorBlockService.instance.getSkipSegments(cleanId).then((segs) {
+          if (mounted) {
+            setState(() => _sponsorSegments = segs);
+          }
+        });
+      }
 
       await _controller!.initialize();
       _controller!.addListener(_videoListener);
@@ -120,9 +146,38 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
   }
 
   void _videoListener() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) return;
+    final ctrl = _controller;
+    if (ctrl != null && ctrl.value.isPlaying && _sponsorSegments.isNotEmpty && SponsorBlockService.instance.isEnabled) {
+      final posSec = ctrl.value.position.inMilliseconds / 1000.0;
+      for (final seg in _sponsorSegments) {
+        final key = '${seg.start.toStringAsFixed(1)}_${seg.end.toStringAsFixed(1)}';
+        if (_skippedSponsorKeys.contains(key)) continue;
+        if (posSec >= seg.start && posSec < seg.end - 0.3) {
+          _skippedSponsorKeys.add(key);
+          final undoPos = ctrl.value.position;
+          ctrl.seekTo(Duration(milliseconds: (seg.end * 1000).round() + 120));
+          final player = Provider.of<PlayerProvider>(context, listen: false);
+          player.recordSponsorSkip(seg.durationSeconds);
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 4),
+              content: Text('SponsorBlock skipped ${seg.displayLabel} (+${seg.durationSeconds.round()}s)'),
+              action: SnackBarAction(
+                label: 'UNDO',
+                textColor: EmberColors.monoWhite,
+                onPressed: () {
+                  ctrl.seekTo(undoPos);
+                },
+              ),
+            ),
+          );
+          break;
+        }
+      }
     }
+    setState(() {});
   }
 
   Future<void> _loadMetadata() async {
@@ -485,22 +540,21 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                           ),
                           const SizedBox(height: 14),
 
-                          // Channel Row with Subscribe Button
+                          // Channel Row with Subscribe Button (Pure Monochrome)
                           Row(
                             children: [
                               Container(
-                                width: 40,
-                                height: 40,
-                                decoration: const BoxDecoration(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    colors: [EmberColors.primaryBlue, EmberColors.secondaryCyan],
-                                  ),
+                                  color: EmberColors.surfaceContainerHigh,
+                                  border: Border.all(color: EmberColors.outlineVariant),
                                 ),
                                 alignment: Alignment.center,
                                 child: Text(
                                   _currentVideo.artist.isNotEmpty ? _currentVideo.artist[0].toUpperCase() : 'A',
-                                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(color: EmberColors.monoWhite, fontSize: 15, fontWeight: FontWeight.w800),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -512,7 +566,7 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                                       _currentVideo.artist,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(color: EmberColors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                                      style: const TextStyle(color: EmberColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w700),
                                     ),
                                     const Text('Creator Channel', style: TextStyle(color: EmberColors.textMuted, fontSize: 11)),
                                   ],
@@ -520,23 +574,26 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                               ),
                               ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: _isSubscribed ? EmberColors.surfaceContainerHigh : EmberColors.primaryBlue,
-                                  foregroundColor: _isSubscribed ? EmberColors.textMuted : Colors.white,
+                                  backgroundColor: _isSubscribed ? EmberColors.surfaceContainerHigh : EmberColors.monoWhite,
+                                  foregroundColor: _isSubscribed ? EmberColors.textSecondary : EmberColors.onAccent,
                                   elevation: 0,
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                    side: _isSubscribed ? const BorderSide(color: EmberColors.outlineVariant) : BorderSide.none,
+                                  ),
                                 ),
                                 onPressed: _toggleSubscription,
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     if (_isSubscribed) ...[
-                                      const FaIcon(FontAwesomeIcons.check, size: 12, color: EmberColors.textMuted),
+                                      const FaIcon(FontAwesomeIcons.check, size: 11, color: EmberColors.textSecondary),
                                       const SizedBox(width: 6),
                                     ],
                                     Text(
                                       _isSubscribed ? 'Subscribed' : 'Subscribe',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
                                     ),
                                   ],
                                 ),
@@ -545,66 +602,67 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                           ),
                           const SizedBox(height: 16),
 
-                          // Action Buttons Bar (NewPipe Action Bar: Background, Download, Equalizer, Add to, Share, Like)
+                          // Production Monochromatic Action Bar
                           SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(),
                             child: Row(
                               children: [
-                                // 1. Background Play / Listen Mode (THE iconic NewPipe button)
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.headphones,
-                                  label: _isListenMode ? 'Video Mode' : 'Background',
+                                  label: _isListenMode ? 'Video' : 'Background',
                                   isActive: _isListenMode,
                                   onTap: _toggleListenMode,
                                 ),
                                 const SizedBox(width: 8),
-                                // 2. Download Button (Video / Audio choice)
+                                _buildActionButton(
+                                  icon: FontAwesomeIcons.alignLeft,
+                                  label: 'Lyrics',
+                                  onTap: () => LyricsSheet.show(context, _currentVideo),
+                                ),
+                                const SizedBox(width: 8),
+                                _buildActionButton(
+                                  icon: FontAwesomeIcons.sliders,
+                                  label: 'Equalizer',
+                                  onTap: () => EqualizerScreen.open(context),
+                                ),
+                                const SizedBox(width: 8),
+                                _buildActionButton(
+                                  icon: FontAwesomeIcons.gaugeHigh,
+                                  label: 'Speed & Pitch',
+                                  onTap: () => PlaybackSpeedSheet.show(context),
+                                ),
+                                const SizedBox(width: 8),
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.download,
                                   label: 'Download',
                                   onTap: () => _showDownloadOptions(context),
                                 ),
                                 const SizedBox(width: 8),
-                                // 3. Sound Shaping & EQ
-                                _buildActionButton(
-                                  icon: FontAwesomeIcons.sliders,
-                                  label: 'Equalizer',
-                                  onTap: () => SoundShapingSheet.show(context),
-                                ),
-                                const SizedBox(width: 8),
-                                // 4. Add to playlist / Bookmark
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.bookmark,
-                                  label: 'Add to',
+                                  label: 'Save',
                                   onTap: () => TrackOptionsSheet.show(context, _currentVideo),
                                 ),
                                 const SizedBox(width: 8),
-                                // 5. Share
                                 _buildActionButton(
                                   icon: FontAwesomeIcons.shareNodes,
                                   label: 'Share',
                                   onTap: () {
-                                    final url = 'https://www.youtube.com/watch?v=${_currentVideo.id}';
+                                    final cleanId = YouTubeFeedService.cleanVideoId(_currentVideo.id);
+                                    final url = 'https://www.youtube.com/watch?v=$cleanId';
                                     Clipboard.setData(ClipboardData(text: url));
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('YouTube video link copied to clipboard!'),
-                                        backgroundColor: EmberColors.surfaceContainerHigh,
-                                      ),
+                                      const SnackBar(content: Text('YouTube video link copied to clipboard')),
                                     );
                                   },
                                 ),
                                 const SizedBox(width: 8),
-                                // 6. Like button
                                 _buildActionButton(
-                                  icon: FontAwesomeIcons.thumbsUp,
+                                  icon: _isLiked ? FontAwesomeIcons.solidThumbsUp : FontAwesomeIcons.thumbsUp,
                                   label: _isLiked ? 'Liked' : 'Like',
                                   isActive: _isLiked,
-                                  onTap: () {
-                                    setState(() {
-                                      _isLiked = !_isLiked;
-                                    });
-                                  },
+                                  onTap: () => setState(() => _isLiked = !_isLiked),
                                 ),
                               ],
                             ),
@@ -619,13 +677,14 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                     delegate: _SliverTabBarDelegate(
                       TabBar(
                         controller: _tabController,
-                        indicatorColor: EmberColors.primaryBlue,
-                        indicatorWeight: 3,
-                        labelColor: EmberColors.primaryBlueHi,
+                        indicatorColor: EmberColors.monoWhite,
+                        indicatorWeight: 2.5,
+                        labelColor: EmberColors.monoWhite,
                         unselectedLabelColor: EmberColors.textMuted,
-                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
                         tabs: const [
-                          Tab(text: 'Up Next & Mix'),
+                          Tab(text: 'Up Next'),
+                          Tab(text: 'Lyrics'),
                           Tab(text: 'Comments'),
                         ],
                       ),
@@ -635,10 +694,8 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                 body: TabBarView(
                   controller: _tabController,
                   children: [
-                    // Up Next / Related Videos & YouTube Mix
                     _buildUpNextTab(),
-
-                    // Real YouTube Comments
+                    const SynchronizedLyricsView(),
                     _buildCommentsTab(),
                   ],
                 ),
@@ -662,10 +719,10 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: isActive ? EmberColors.primaryBlue.withValues(alpha: 0.2) : EmberColors.surfaceContainerHigh,
+          color: isActive ? EmberColors.monoWhite : EmberColors.surfaceContainerLow,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isActive ? EmberColors.primaryBlue : Colors.white.withValues(alpha: 0.08),
+            color: isActive ? EmberColors.monoWhite : EmberColors.outlineVariant,
             width: 1,
           ),
         ),
@@ -674,15 +731,15 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
           children: [
             FaIcon(
               icon,
-              size: 13,
-              color: isActive ? EmberColors.primaryBlueHi : EmberColors.textPrimary,
+              size: 12.5,
+              color: isActive ? EmberColors.onAccent : EmberColors.monoWhite,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 7),
             Text(
               label,
               style: TextStyle(
-                color: isActive ? EmberColors.primaryBlueHi : EmberColors.textPrimary,
-                fontSize: 12.5,
+                color: isActive ? EmberColors.onAccent : EmberColors.textPrimary,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -797,7 +854,10 @@ class _AuraVideoPlayerScreenState extends State<AuraVideoPlayerScreen> with Sing
                         const SizedBox(height: 12),
                         ElevatedButton(
                           onPressed: _loadVideo,
-                          style: ElevatedButton.styleFrom(backgroundColor: EmberColors.primaryBlue),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: EmberColors.monoWhite,
+                            foregroundColor: EmberColors.onAccent,
+                          ),
                           child: const Text('Retry'),
                         ),
                       ],

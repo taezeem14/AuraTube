@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:audio_service/audio_service.dart';
@@ -19,8 +21,8 @@ Future<AudioHandler> initAudioHandler() async {
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.taezeem.auratube.channel.audio',
         androidNotificationChannelName: 'AuraTube Playback',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
+        androidNotificationOngoing: false,
+        androidStopForegroundOnPause: false,
         androidNotificationIcon: 'mipmap/ic_launcher',
       ),
     ).timeout(
@@ -58,13 +60,43 @@ class EqualizerBandInfo {
 
 class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   static const MethodChannel _effectsChannel = MethodChannel('com.taezeem.auratube/audio_effects');
+  int? _lastBroadcastSessionId;
+  bool _isHardwareEqAvailable = true;
+  bool get isHardwareEqAvailable => _isHardwareEqAvailable;
+  ValueChanged<SponsorSegment>? onSponsorSkipped;
+  List<SponsorSegment> get activeSponsorSegments => List.unmodifiable(_activeSponsorSegments);
+  static const Map<String, List<double>> _spotifyPresetMap = {
+    // Genre Classics & Master Presets
+    'dance': [4.5, 3.0, -1.0, 0.0, 3.0, 4.0],
+    'deep': [5.5, 3.5, 1.5, -1.0, -2.5, -4.0],
+    'electronic': [4.5, 2.5, 0.0, -1.0, 2.0, 4.5],
+    'flat': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'hip-hop': [5.5, 4.0, 1.0, 1.0, 3.0, 3.0],
+    'jazz': [3.0, 2.0, -1.0, 1.0, 2.0, 3.0],
+    'latin': [4.0, 2.0, 0.0, 0.0, 3.0, 4.0],
+    'loudness': [6.0, 3.0, -1.0, 0.0, 2.0, 5.0],
+    'lounge': [2.0, 3.0, 1.0, -1.0, 0.0, -1.5],
+    'piano': [1.0, 2.0, 3.0, 2.0, 3.0, 2.0],
+    'pop': [3.0, 2.0, 2.0, 3.0, 2.0, 2.0],
+    'r&b': [5.5, 4.0, 1.0, 2.0, 3.0, 2.0],
+    'rock': [5.0, 3.0, -1.0, 1.0, 3.0, 4.0],
+    'small speakers': [-3.0, 2.0, 4.0, 3.0, 3.0, 2.0],
+    'spoken word': [-4.0, -1.0, 3.0, 4.0, 2.0, -2.0],
+    'treble booster': [-1.0, 0.0, 0.0, 2.0, 4.0, 6.0],
+    'treble reducer': [0.0, 0.0, 0.0, -1.0, -3.0, -5.0],
+    'vocal booster': [-2.0, 0.0, 3.0, 4.0, 2.0, -1.0],
+    'bass boost': [6.0, 4.0, 1.5, 0.0, 0.0, 0.0],
+    'lo-fi': [-1.0, 2.0, 3.0, 1.0, -2.0, -4.0],
+    'warm tape': [2.0, 1.0, 0.0, 0.0, -1.0, -2.0],
+    'vocal air': [0.0, 0.5, 1.0, 2.0, 2.5, 2.0],
+    'acoustic': [1.0, 0.5, 0.5, 0.5, 1.2, 1.0],
+    'club': [5.0, 3.5, -0.5, 1.5, 3.5, 4.5],
+    'bass reducer': [-5.0, -3.0, -1.0, 0.0, 0.0, 0.0],
+  };
+
   final AndroidEqualizer _equalizer = AndroidEqualizer();
   final AndroidLoudnessEnhancer _loudnessEnhancer = AndroidLoudnessEnhancer();
   late final AudioPlayer _player;
-
-  bool _isHardwareEqAvailable = true;
-  bool get isHardwareEqAvailable => _isHardwareEqAvailable;
-  int? _lastSessionId;
 
   Song? _currentSong;
   int _playRequestId = 0;
@@ -89,7 +121,26 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   bool _eqEnabled = false;
   double _bassBoost = 0.0;
   String _currentPreset = 'Flat';
-  final Map<int, double> _customBandGains = {};
+  final Map<int, double> _userCustomBandGains = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0};
+  final Map<int, double> _appliedHardwareBandGains = {};
+
+  int _lastEqSyncedPlayRequestId = -1;
+  bool _isSyncingDsp = false;
+  bool _pendingDspSync = false;
+  bool _pendingForceRebind = false;
+  Completer<void>? _activeSyncCompleter;
+
+  void setCustomBandGains(Map<int, double> gains) {
+    _userCustomBandGains.addAll(gains);
+  }
+
+  Map<int, double> get userCustomBandGains => Map.unmodifiable(_userCustomBandGains);
+
+  bool _clippingProtectionEnabled = true;
+  double _masterVolume = 1.0;
+  double _headroomAttenuation = 1.0;
+  bool get clippingProtectionEnabled => _clippingProtectionEnabled;
+  double get headroomAttenuation => _headroomAttenuation;
 
   List<SponsorSegment> _activeSponsorSegments = [];
   final Set<String> _skippedSegmentKeys = {};
@@ -131,12 +182,13 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   SineAudioHandler() {
     _player = AudioPlayer(
+      handleInterruptions: false,
       audioLoadConfiguration: const AudioLoadConfiguration(
         androidLoadControl: AndroidLoadControl(
           minBufferDuration: Duration(seconds: 15),
           maxBufferDuration: Duration(seconds: 45),
-          bufferForPlaybackDuration: Duration(milliseconds: 500),
-          bufferForPlaybackAfterRebufferDuration: Duration(milliseconds: 1500),
+          bufferForPlaybackDuration: Duration(milliseconds: 1200),
+          bufferForPlaybackAfterRebufferDuration: Duration(milliseconds: 2000),
           backBufferDuration: Duration(seconds: 10),
         ),
         darwinLoadControl: DarwinLoadControl(
@@ -146,13 +198,26 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       ),
       audioPipeline: AudioPipeline(
         androidAudioEffects: [
-          _loudnessEnhancer,
           _equalizer,
+          _loudnessEnhancer,
         ],
+      ),
+      androidAudioOffloadPreferences: const AndroidAudioOffloadPreferences(
+        audioOffloadMode: AndroidAudioOffloadMode.disabled,
       ),
     );
     _initAudioStreams();
     _initAudioSession();
+  }
+
+  /// Starts ExoPlayer playback without awaiting the track-end Future returned by
+  /// just_audio's AudioPlayer.play() (which only resolves when paused/completed).
+  void _triggerPlayNonBlocking() {
+    unawaited(
+      _player.play().catchError((Object e) {
+        debugPrint('[AudioHandler] Non-blocking play() error: $e');
+      }),
+    );
   }
 
   Future<void> _initAudioSession() async {
@@ -184,8 +249,8 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         } else {
           switch (event.type) {
             case AudioInterruptionType.duck:
-              _player.setVolume(_preDuckVolume);
               _isDucked = false;
+              _updateHeadroomGain();
               break;
             case AudioInterruptionType.pause:
               if (_wasPlayingBeforeInterrupt) play();
@@ -265,9 +330,20 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             queueIndex: event.currentIndex,
           ),
         );
+        _syncWidget();
       },
       onError: (Object e, StackTrace st) {
         LogService.w('AudioHandler', 'playbackEventStream error: $e');
+        if (_currentTrackActive && _currentSong != null && !_isReconnecting && !_isSwappingStream) {
+          _handleMidStreamNetworkDrop();
+        }
+      },
+    );
+
+    // just_audio 0.10.x delivers native ExoPlayer errors on errorStream
+    _player.errorStream.listen(
+      (PlayerException e) {
+        LogService.w('AudioHandler', 'errorStream error (${e.code}): ${e.message}');
         if (_currentTrackActive && _currentSong != null && !_isReconnecting && !_isSwappingStream) {
           _handleMidStreamNetworkDrop();
         }
@@ -288,7 +364,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
     // Auto-advance when song finishes (guarded to fire only when track genuinely started and completed playback)
     _player.playerStateStream.listen(
-      (state) {
+      (state) async {
         if (_isSwappingStream) {
           // CRITICAL: Block spurious completion/idle events during seamless stream swap
           return;
@@ -298,6 +374,17 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         if (state.playing && state.processingState == ProcessingState.ready) {
           _currentTrackActive = true;
           _completionHandled = false;
+          // Re-arm hardware equalizer, bass boost, and headroom limiter on the active AudioTrack
+          if (_lastEqSyncedPlayRequestId != _playRequestId) {
+            _lastEqSyncedPlayRequestId = _playRequestId;
+            final int capturedReqId = _playRequestId;
+            _restorePlaybackParameters(forceRebindEq: true);
+            Future<void>.delayed(const Duration(milliseconds: 220), () {
+              if (_playRequestId == capturedReqId && _player.playing && _eqEnabled) {
+                _scheduleDspSync(forceRebind: false);
+              }
+            });
+          }
         }
 
         if (state.processingState == ProcessingState.completed && _currentTrackActive && !_completionHandled) {
@@ -318,7 +405,10 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           _currentTrackActive = false;
           _completionHandled = true;
           _consecutiveReconnectAttempts = 0;
-          debugPrint('[AudioHandler] Track "${_currentSong?.title}" completed playback cleanly. Invoking onCompleted.');
+          debugPrint('[AudioHandler] Track "${_currentSong?.title}" completed playback cleanly. Gapless: $_gaplessPlayback. Invoking onCompleted.');
+          if (!_gaplessPlayback) {
+            await Future<void>.delayed(const Duration(milliseconds: 250));
+          }
           _onCompleted?.call().catchError((e) {
             debugPrint('[AudioHandler] Error in _onCompleted callback: $e');
           });
@@ -332,10 +422,18 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       },
     );
 
-    // SponsorBlock: auto-skip promotional/intro segments during YouTube playback
+    // Crossfade & SponsorBlock handling
     _player.positionStream.listen(
       (pos) {
         _lastKnownPosition = pos;
+        final total = _player.duration;
+        if (_crossfadeSeconds > 0 && total != null && total.inSeconds > _crossfadeSeconds) {
+          final remaining = total - pos;
+          if (remaining <= Duration(seconds: _crossfadeSeconds) && remaining > Duration.zero) {
+            final fadeMultiplier = (remaining.inMilliseconds / (_crossfadeSeconds * 1000.0)).clamp(0.05, 1.0);
+            setSleepFadeMultiplier(fadeMultiplier);
+          }
+        }
         if (_activeSponsorSegments.isNotEmpty && !_isSkippingSponsor) {
           final currentSec = pos.inMilliseconds / 1000.0;
           final totalSec = (_player.duration?.inMilliseconds ?? 0) / 1000.0;
@@ -355,7 +453,8 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
                 _isSkippingSponsor = false;
                 _currentTrackActive = false;
                 _completionHandled = true;
-                _player.stop().catchError((_) {});
+                _lastKnownPosition = _player.duration ?? Duration(seconds: totalSec.toInt());
+                _player.pause().catchError((_) {});
                 _onCompleted?.call();
                 return;
               }
@@ -365,6 +464,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
               final safeTarget = Duration(milliseconds: targetMs.clamp(0, maxDurationMs > 500 ? maxDurationMs - 200 : maxDurationMs));
 
               debugPrint('SponsorBlock: auto-skipping ${segment.category} [${segment.start}s - ${segment.end}s] to ${safeTarget.inMilliseconds}ms');
+              onSponsorSkipped?.call(segment);
 
               _player.seek(safeTarget).catchError((e) {
                 debugPrint('SponsorBlock seek error: $e');
@@ -381,33 +481,25 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       },
     );
 
-    // AudioEffect Session ID Broadcast to Android OS (Viper4Android, AudioFX, Wavelet, JamesDSP)
-    _player.androidAudioSessionIdStream.listen((sessionId) {
-      if (sessionId != null && sessionId > 0 && sessionId != _lastSessionId) {
-        _lastSessionId = sessionId;
-        _broadcastAudioSession(sessionId);
-      }
-    });
-  }
-
-  Future<void> _broadcastAudioSession(int sessionId) async {
-    try {
-      await _effectsChannel.invokeMethod('openAudioEffectSession', {'sessionId': sessionId});
-      debugPrint('[AudioHandler] Successfully broadcasted audio session $sessionId to Android OS');
-    } catch (e) {
-      debugPrint('[AudioHandler] Error broadcasting audio session: $e');
-    }
-  }
-
-  Future<bool> openSystemEqualizer() async {
-    try {
-      final sessionId = _player.androidAudioSessionId ?? _lastSessionId ?? 0;
-      final res = await _effectsChannel.invokeMethod<bool>('openSystemEqualizer', {'sessionId': sessionId});
-      return res ?? false;
-    } catch (e) {
-      debugPrint('[AudioHandler] Error opening system equalizer: $e');
-      return false;
-    }
+    // Re-apply DSP Equalizer and Bass Boost whenever a new Android AudioSession ID is bound
+    // (Crucial for track changes in playlist, Bluetooth headphone route changes, and earbud reconnects)
+    _player.androidAudioSessionIdStream.listen(
+      (sessionId) async {
+        if (sessionId != null && sessionId > 0) {
+          if (sessionId != _lastBroadcastSessionId) {
+            _lastBroadcastSessionId = sessionId;
+            _broadcastAudioSession(sessionId);
+          }
+          debugPrint('[AudioHandler] Android AudioSessionId bound ($sessionId). Re-applying Equalizer & DSP parameters...');
+          // Give ExoPlayer native audio sink a brief window to complete initialization
+          await Future<void>.delayed(const Duration(milliseconds: 60));
+          await _restorePlaybackParameters(forceRebindEq: true);
+        }
+      },
+      onError: (Object e) {
+        debugPrint('[AudioHandler] androidAudioSessionIdStream error: $e');
+      },
+    );
   }
 
   /// NewPipe-style auto-reconnection on mid-stream network drop or socket severance
@@ -466,11 +558,11 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             url,
             headers: isYouTubeStream ? _youtubeHeaders : null,
             initialPosition: resumePos,
-            preload: false,
+            preload: true,
           ).timeout(const Duration(seconds: 12));
 
-          await _player.play();
-          await _restorePlaybackParameters();
+          await _restorePlaybackParameters(forceRebindEq: false);
+          _triggerPlayNonBlocking();
           reconnected = true;
           _isReconnecting = false;
           _consecutiveReconnectAttempts = 0;
@@ -479,7 +571,6 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           LogService.stream('AudioHandler', 'Successfully resumed "${targetSong.title}" from ${resumePos.inSeconds}s!');
           return;
         } catch (e) {
-          try { await _player.stop(); } catch (_) {}
           if (e.toString().contains('403')) break; // Fast bypass to proxy
         }
       }
@@ -496,11 +587,11 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
               pipedUrl,
               headers: _proxyHeaders,
               initialPosition: resumePos,
-              preload: false,
+              preload: true,
             ).timeout(const Duration(seconds: 7));
 
-            await _player.play();
-            await _restorePlaybackParameters();
+            await _restorePlaybackParameters(forceRebindEq: false);
+            _triggerPlayNonBlocking();
             _isReconnecting = false;
             _consecutiveReconnectAttempts = 0;
             _currentTrackActive = true;
@@ -542,9 +633,13 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _isSkippingSponsor = false;
     _skippedSegmentKeys.clear();
 
-    // Flush ExoPlayer pipeline before loading new track to avoid stale playback events
+    // Pause current source smoothly instead of calling _player.stop().
+    // _player.stop() in just_audio disposes ExoPlayer and releases native Android AudioEffects,
+    // which causes the hardware Equalizer to detach on subsequent playlist songs.
     try {
-      await _player.stop();
+      if (_player.playing) {
+        await _player.pause();
+      }
     } catch (_) {}
 
     if (currentRequestId != _playRequestId) return;
@@ -608,11 +703,11 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           _activeStreamUrl = localPath;
           await _player.setFilePath(localPath, initialPosition: Duration.zero, preload: true);
           if (currentRequestId != _playRequestId) {
-            try { await _player.stop(); } catch (_) {}
+            try { await _player.pause(); } catch (_) {}
             return;
           }
-          await _player.play();
-          await _restorePlaybackParameters();
+          await _restorePlaybackParameters(forceRebindEq: false);
+          _triggerPlayNonBlocking();
           return;
         } else {
           // File does not exist locally anymore; fall through to online stream resolver
@@ -632,6 +727,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       LogService.instance.recordCandidates(candidates);
 
       bool started = false;
+
       for (int i = 0; i < candidates.length; i++) {
         if (currentRequestId != _playRequestId) return; // Superseded by newer track selection
         final url = candidates[i];
@@ -645,23 +741,45 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             url,
             headers: isYouTubeStream ? _youtubeHeaders : null,
             initialPosition: Duration.zero,
-            preload: false,
-          ).timeout(const Duration(seconds: 12));
+            preload: true,
+          ).timeout(const Duration(seconds: 6));
           if (currentRequestId != _playRequestId) {
-            try { await _player.stop(); } catch (_) {}
+            try { await _player.pause(); } catch (_) {}
             return;
           }
-          await _player.play();
+          await _restorePlaybackParameters(forceRebindEq: false);
+          _triggerPlayNonBlocking();
           started = true;
           LogService.instance.recordPlaybackSuccess(song);
           debugPrint('Successfully playing "${song.title}" via candidate #${i + 1}');
           break;
         } catch (e) {
-          try { await _player.stop(); } catch (_) {}
           LogService.w('AudioHandler', 'Candidate #${i + 1} connection failed: $e');
-          if (e.toString().contains('403') || e.toString().contains('InvalidResponseCodeException: 403')) {
-            LogService.w('AudioHandler', 'HTTP 403 detected on direct stream. Skipping to proxy engine...');
-            break;
+
+          // Resilient fallback: Retry candidate with clean ExoPlayer headers if custom headers triggered Source error / 403
+          if (isYouTubeStream) {
+            try {
+              LogService.stream('AudioHandler', 'Retrying candidate #${i + 1} with clean headers...');
+              _activeStreamUrl = url;
+              await _player.setUrl(
+                url,
+                headers: null,
+                initialPosition: Duration.zero,
+                preload: true,
+              ).timeout(const Duration(seconds: 5));
+              if (currentRequestId != _playRequestId) {
+                try { await _player.pause(); } catch (_) {}
+                return;
+              }
+              await _restorePlaybackParameters(forceRebindEq: false);
+              _triggerPlayNonBlocking();
+              started = true;
+              LogService.instance.recordPlaybackSuccess(song);
+              debugPrint('Successfully playing "${song.title}" via candidate #${i + 1} (clean headers)');
+              break;
+            } catch (retryErr) {
+              LogService.w('AudioHandler', 'Candidate #${i + 1} retry failed: $retryErr');
+            }
           }
         }
       }
@@ -676,7 +794,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           for (int i = 0; i < freshCandidates.length; i++) {
             if (currentRequestId != _playRequestId) return;
             final url = freshCandidates[i];
-            if (url.isEmpty || candidates.contains(url)) continue;
+            if (url.isEmpty) continue;
             final isYouTubeStream = url.contains('googlevideo.com') || url.contains('youtube.com');
             try {
               LogService.stream('AudioHandler', 'Connecting to fresh candidate #${i + 1}...');
@@ -685,20 +803,42 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
                 url,
                 headers: isYouTubeStream ? _youtubeHeaders : null,
                 initialPosition: Duration.zero,
-                preload: false,
-              ).timeout(const Duration(seconds: 12));
+                preload: true,
+              ).timeout(const Duration(seconds: 6));
               if (currentRequestId != _playRequestId) {
-                try { await _player.stop(); } catch (_) {}
+                try { await _player.pause(); } catch (_) {}
                 return;
               }
-              await _player.play();
+              await _restorePlaybackParameters(forceRebindEq: false);
+              _triggerPlayNonBlocking();
               started = true;
               LogService.instance.recordPlaybackSuccess(song);
               debugPrint('Successfully playing "${song.title}" via fresh candidate #${i + 1}');
               break;
             } catch (e) {
-              try { await _player.stop(); } catch (_) {}
               LogService.w('AudioHandler', 'Fresh candidate #${i + 1} failed: $e');
+              if (isYouTubeStream) {
+                try {
+                  LogService.stream('AudioHandler', 'Retrying fresh candidate #${i + 1} with clean headers...');
+                  _activeStreamUrl = url;
+                  await _player.setUrl(
+                    url,
+                    headers: null,
+                    initialPosition: Duration.zero,
+                    preload: true,
+                  ).timeout(const Duration(seconds: 5));
+                  if (currentRequestId != _playRequestId) {
+                    try { await _player.pause(); } catch (_) {}
+                    return;
+                  }
+                  await _restorePlaybackParameters(forceRebindEq: false);
+                  _triggerPlayNonBlocking();
+                  started = true;
+                  LogService.instance.recordPlaybackSuccess(song);
+                  debugPrint('Successfully playing "${song.title}" via fresh candidate #${i + 1} (clean headers)');
+                  break;
+                } catch (_) {}
+              }
             }
           }
         } catch (e) {
@@ -721,20 +861,20 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
                 pipedUrl,
                 headers: _proxyHeaders,
                 initialPosition: Duration.zero,
-                preload: false,
+                preload: true,
               ).timeout(const Duration(seconds: 12));
               if (currentRequestId != _playRequestId) {
-                try { await _player.stop(); } catch (_) {}
+                try { await _player.pause(); } catch (_) {}
                 return;
               }
-              await _player.play();
+              await _restorePlaybackParameters(forceRebindEq: false);
+              _triggerPlayNonBlocking();
               started = true;
               LogService.instance.recordPlaybackSuccess(song);
               StreamResolverService.cacheStream(song.id, pipedUrl);
               debugPrint('Successfully playing "${song.title}" via Piped proxy fallback');
             }
           } catch (e) {
-            try { await _player.stop(); } catch (_) {}
             LogService.w('AudioHandler', 'Piped proxy fallback error: $e');
             debugPrint('[AudioHandler] Piped proxy fallback error for "${song.title}": $e');
           }
@@ -742,7 +882,7 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       }
 
       if (started) {
-        await _restorePlaybackParameters();
+        unawaited(_restorePlaybackParameters(forceRebindEq: false));
       }
 
       if (!started) {
@@ -788,54 +928,51 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     }
   }
 
-  // Equalizer & Audio Shaping Controls (Pure Hardware Multi-Band DSP + Software Fallback for Root/Custom ROMs)
-  Future<void> _updateAudioEffects() async {
-    if (!_isHardwareEqAvailable) {
-      await _applySoftwareGainShaping();
-      return;
-    }
-    try {
-      await _equalizer.setEnabled(_eqEnabled);
-    } catch (e) {
-      debugPrint('[AudioHandler] Error setting equalizer enabled (Custom ROM / Root detected): $e');
-      _isHardwareEqAvailable = false;
-      await _applySoftwareGainShaping();
-    }
+  // Equalizer & Audio Shaping Controls (Pure Hardware Multi-Band DSP, No Artificial Gain Blowout)
+  Future<void> setEqualizerEnabled(bool enabled) async {
+    _eqEnabled = enabled;
+    await _scheduleDspSync(forceRebind: enabled);
   }
 
-  Future<void> _applySoftwareGainShaping() async {
+  Future<void> ensureEqualizerSynced({bool forceRebind = false}) async {
+    await _scheduleDspSync(forceRebind: forceRebind);
+  }
+
+  Future<void> setClippingProtection(bool enabled) async {
+    _clippingProtectionEnabled = enabled;
+    await _updateHeadroomGain();
+  }
+
+  Future<void> setMasterVolume(double volume) async {
+    _masterVolume = volume.clamp(0.0, 1.0);
+    _preDuckVolume = _masterVolume;
+    await _updateHeadroomGain();
+  }
+
+  void _syncWidget() {
+    // Reserved for future AuraTube desktop/home-screen widget bridge
+  }
+
+  Future<void> _broadcastAudioSession(int sessionId) async {
     try {
-      // Direct hardware-level dynamic sub-bass punch and loudness boost via Android LoudnessEnhancer
-      final bassGainDb = _bassBoost * 10.0; // Up to +10 dB clean punch
-      double avgGain = 0.0;
-      if (_customBandGains.isNotEmpty) {
-        for (final g in _customBandGains.values) {
-          avgGain += g;
-        }
-        avgGain /= _customBandGains.length;
-      }
+      await _effectsChannel.invokeMethod('openAudioEffectSession', {'sessionId': sessionId});
+    } catch (_) {}
+  }
 
-      final targetGainDb = (_eqEnabled ? (bassGainDb + (avgGain * 0.4)) : 0.0).clamp(0.0, 12.0);
-
-      try {
-        await _loudnessEnhancer.setEnabled(_eqEnabled && (_bassBoost > 0.02 || avgGain.abs() > 0.5));
-        await _loudnessEnhancer.setTargetGain(targetGainDb);
-      } catch (e) {
-        debugPrint('[AudioHandler] LoudnessEnhancer update: $e');
-      }
-
-      // Dynamic headroom compensation
-      final dynamicVol = (1.0 + (_eqEnabled ? (avgGain / 45.0) : 0.0)).clamp(0.4, 1.25);
-      await _player.setVolume(dynamicVol);
-    } catch (e) {
-      debugPrint('[AudioHandler] _applySoftwareGainShaping error: $e');
+  Future<bool> openSystemEqualizer() async {
+    try {
+      final sessionId = _player.androidAudioSessionId ?? _lastBroadcastSessionId ?? 0;
+      final res = await _effectsChannel.invokeMethod<bool>('openSystemEqualizer', {'sessionId': sessionId});
+      return res ?? false;
+    } catch (_) {
+      return false;
     }
   }
 
   Future<List<EqualizerBandInfo>> getBandInfoList() async {
     try {
-      if (_player.audioSource != null) {
-        final params = await _equalizer.parameters;
+      if (_player.androidAudioSessionId != null && _player.androidAudioSessionId! > 0) {
+        final params = await _equalizer.parameters.timeout(const Duration(seconds: 2));
         final bands = params.bands;
         if (bands.isNotEmpty) {
           _isHardwareEqAvailable = true;
@@ -844,296 +981,298 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             final freq = b.centerFrequency;
             final label = freq >= 1000
                 ? '${(freq / 1000).toStringAsFixed(1)} kHz'
-                : '$freq Hz';
+                : '${freq.round()} Hz';
             return EqualizerBandInfo(
               index: i,
               centerFrequency: freq.round(),
               label: label,
-              gain: _customBandGains[i] ?? b.gain,
+              gain: _appliedHardwareBandGains[i] ?? b.gain,
               minDecibels: params.minDecibels,
               maxDecibels: params.maxDecibels,
             );
           });
         }
       }
-    } catch (e) {
-      debugPrint('[AudioHandler] Hardware EQ query notice: $e');
-    }
+    } catch (_) {}
 
-    // High-fidelity standard 5-band configuration (60 Hz, 230 Hz, 910 Hz, 3.6 kHz, 14 kHz)
-    const freqs = [60, 230, 910, 3600, 14000];
-    const labels = ['60 Hz', '230 Hz', '910 Hz', '3.6 kHz', '14 kHz'];
-    return List.generate(5, (i) {
+    const freqs = [60, 150, 400, 1000, 2400, 15000];
+    const labels = ['60 Hz', '150 Hz', '400 Hz', '1 kHz', '2.4 kHz', '15 kHz'];
+    return List.generate(6, (i) {
       return EqualizerBandInfo(
         index: i,
         centerFrequency: freqs[i],
         label: labels[i],
-        gain: _customBandGains[i] ?? 0.0,
+        gain: _userCustomBandGains[i] ?? 0.0,
         minDecibels: -12.0,
         maxDecibels: 12.0,
       );
     });
   }
 
-  Future<void> setEqualizerEnabled(bool enabled) async {
-    _eqEnabled = enabled;
-    await _updateAudioEffects();
-    if (_eqEnabled) {
-      await applyEqualizerPreset(_currentPreset);
+  Future<void> _updateHeadroomGain() async {
+    final bool isPitchOrSpeedShifted =
+        (_activeSpeed - 1.0).abs() > 0.005 || (_activePitch - 1.0).abs() > 0.005;
+
+    // Gentle transparent headroom (-0.5 dB = 0.94x) when pitch/speed is shifted
+    // to preserve dynamics, loud punch, and audible hardware EQ filtering without clipping.
+    final double pitchSpeedHeadroom = isPitchOrSpeedShifted ? 0.94 : 1.0;
+
+    if (!_clippingProtectionEnabled) {
+      _headroomAttenuation = pitchSpeedHeadroom;
+      if (!_isDucked) {
+        final vol = (_masterVolume * _headroomAttenuation * _normalizationGain * _sleepFadeMultiplier).clamp(0.0, 1.0);
+        await _player.setVolume(vol).catchError((_) {});
+      }
+      return;
     }
+
+    double maxBoost = 0.0;
+
+    if (_eqEnabled) {
+      final activePresetLower = _currentPreset.toLowerCase().trim();
+      if (activePresetLower == 'custom') {
+        for (final gain in _userCustomBandGains.values) {
+          if (gain > maxBoost) maxBoost = gain;
+        }
+      } else if (_spotifyPresetMap.containsKey(activePresetLower)) {
+        final curve = _spotifyPresetMap[activePresetLower]!;
+        for (final g in curve) {
+          if (g > maxBoost) maxBoost = g;
+        }
+      }
+
+      if (_bassBoost > 0) {
+        maxBoost += (_bassBoost * 4.5);
+      }
+    }
+
+    if (maxBoost > 1.5) {
+      // Gentle logarithmic preamp headroom (-0.0 to -2.8 dB max) so enabling EQ stays punchy and rich
+      // without sounding noticeably quieter than bypass.
+      final excessDb = (maxBoost - 1.5).clamp(0.0, 10.5);
+      final attenuationDb = (excessDb * 0.26).clamp(0.0, 2.8);
+      final linearFactor = math.pow(10.0, -attenuationDb / 20.0).toDouble();
+      _headroomAttenuation = (linearFactor * pitchSpeedHeadroom).clamp(0.68, 1.0);
+    } else {
+      _headroomAttenuation = pitchSpeedHeadroom;
+    }
+
+    if (!_isDucked) {
+      try {
+        final targetVol = (_masterVolume * _headroomAttenuation * _normalizationGain * _sleepFadeMultiplier).clamp(0.0, 1.0);
+        await _player.setVolume(targetVol).catchError((_) {});
+      } catch (_) {}
+    }
+  }
+
+  /// Atomic equalizer configuration helper: updates multiple EQ fields in-memory first
+  /// and runs ONE clean DSP sync instead of 2-3 competing MethodChannel bursts.
+  Future<void> configureEqualizer({
+    bool? enabled,
+    String? preset,
+    Map<int, double>? customGains,
+    double? bassBoost,
+  }) async {
+    if (enabled != null) _eqEnabled = enabled;
+    if (preset != null) _currentPreset = preset;
+    if (customGains != null) {
+      _userCustomBandGains
+        ..clear()
+        ..addAll(customGains);
+    }
+    if (bassBoost != null) _bassBoost = bassBoost.clamp(0.0, 1.0);
+    await _scheduleDspSync(forceRebind: false);
   }
 
   Future<void> setBassBoost(double gain) async {
     _bassBoost = gain.clamp(0.0, 1.0);
-    try {
-      if (_bassBoost > 0.0 && !_eqEnabled) {
-        _eqEnabled = true;
-        if (_isHardwareEqAvailable) {
-          try {
-            await _equalizer.setEnabled(true);
-          } catch (_) {
-            _isHardwareEqAvailable = false;
-          }
-        }
-      }
-      if (_eqEnabled) {
-        if (_isHardwareEqAvailable) {
-          try {
-            await _equalizer.setEnabled(true);
-          } catch (_) {
-            _isHardwareEqAvailable = false;
-          }
-        }
-        await applyEqualizerPreset(_currentPreset);
-      }
-      await _applySoftwareGainShaping();
-    } catch (e) {
-      debugPrint('[AudioHandler] setBassBoost error: $e');
-      await _applySoftwareGainShaping();
-    }
+    await _scheduleDspSync(forceRebind: false);
   }
 
   Future<void> setBandGain(int bandIndex, double gain) async {
-    _customBandGains[bandIndex] = gain;
-    if (_isHardwareEqAvailable) {
-      try {
-        final params = await _equalizer.parameters;
-        if (bandIndex >= 0 && bandIndex < params.bands.length) {
-          final clamped = gain.clamp(params.minDecibels, params.maxDecibels);
-          await params.bands[bandIndex].setGain(clamped);
-        }
-      } catch (e) {
-        debugPrint('[AudioHandler] setBandGain error on hardware effect: $e');
-        _isHardwareEqAvailable = false;
-      }
-    }
-    await _applySoftwareGainShaping();
+    _userCustomBandGains[bandIndex] = gain;
+    _currentPreset = 'Custom';
+    await _scheduleDspSync(forceRebind: false);
   }
 
   Future<void> applyEqualizerPreset(String preset) async {
     _currentPreset = preset;
+    await _scheduleDspSync(forceRebind: false);
+  }
+
+  /// Log-frequency interpolation mapping Sine's 6 UI anchor frequencies
+  /// [60 Hz, 150 Hz, 400 Hz, 1 kHz, 2.4 kHz, 15 kHz] cleanly to any Android hardware
+  /// band's real center frequency (5-band, 7-band, or 10-band DSP).
+  /// Guarantees UI band 2 (400 Hz) actively shapes both 230 Hz and 910 Hz on 5-band hardware.
+  static const List<double> uiBandCenterFrequenciesHz = [
+    60.0,
+    150.0,
+    400.0,
+    1000.0,
+    2400.0,
+    15000.0,
+  ];
+
+  @visibleForTesting
+  static double interpolateSixBandGain(double hwCenterFreqHz, List<double> sixBandGains) {
+    if (sixBandGains.isEmpty) return 0.0;
+    if (sixBandGains.length == 1) return sixBandGains.first;
+    final freq = hwCenterFreqHz.clamp(20.0, 20000.0);
+    final anchors = uiBandCenterFrequenciesHz;
+    final count = math.min(sixBandGains.length, anchors.length);
+    if (freq <= anchors[0]) return sixBandGains[0];
+    if (freq >= anchors[count - 1]) return sixBandGains[count - 1];
+
+    final logFreq = math.log(freq);
+    for (int i = 0; i < count - 1; i++) {
+      if (freq >= anchors[i] && freq <= anchors[i + 1]) {
+        final logLow = math.log(anchors[i]);
+        final logHigh = math.log(anchors[i + 1]);
+        final t = ((logFreq - logLow) / (logHigh - logLow)).clamp(0.0, 1.0);
+        return sixBandGains[i] + (sixBandGains[i + 1] - sixBandGains[i]) * t;
+      }
+    }
+    return sixBandGains[count - 1];
+  }
+
+  /// Serialized single-writer DSP sync queue. Prevents concurrent track/session/UI calls
+  /// from interleaving or overriding newer EQ curves with stale futures.
+  Future<void> _scheduleDspSync({bool forceRebind = false}) {
+    _pendingDspSync = true;
+    if (forceRebind) _pendingForceRebind = true;
+
+    if (_isSyncingDsp) {
+      return _activeSyncCompleter?.future ?? Future<void>.value();
+    }
+
+    final completer = Completer<void>();
+    _activeSyncCompleter = completer;
+    _isSyncingDsp = true;
+
+    () async {
+      try {
+        while (_pendingDspSync) {
+          final doRebind = _pendingForceRebind;
+          _pendingDspSync = false;
+          _pendingForceRebind = false;
+          await _applyDspEffectsNow(forceRebind: doRebind);
+        }
+      } finally {
+        _isSyncingDsp = false;
+        if (!completer.isCompleted) completer.complete();
+        _activeSyncCompleter = null;
+      }
+    }();
+
+    return completer.future;
+  }
+
+  Future<void> _applyDspEffectsNow({required bool forceRebind}) async {
+    final bool shouldEnableEq = _eqEnabled &&
+        _currentPreset != 'Vocals Only' &&
+        _currentPreset != 'Instruments Only';
+
+    // 1. Update LoudnessEnhancer (just_audio 0.10.x takes true dB, converted *100 to millibels)
     try {
-      if (_eqEnabled) {
+      final bool isPitchOrSpeedShifted =
+          (_activeSpeed - 1.0).abs() > 0.005 || (_activePitch - 1.0).abs() > 0.005;
+      if (_bassBoost > 0.0 && shouldEnableEq) {
+        final targetGain = isPitchOrSpeedShifted ? (_bassBoost * 2.5) : (_bassBoost * 3.5);
+        await _loudnessEnhancer.setEnabled(true).catchError((_) {});
+        await _loudnessEnhancer.setTargetGain(targetGain).catchError((_) {});
+      } else {
+        await _loudnessEnhancer.setTargetGain(0.0).catchError((_) {});
+        await _loudnessEnhancer.setEnabled(false).catchError((_) {});
+      }
+    } catch (_) {}
+
+    // 2. If disabled, push disabled state and recalculate headroom
+    if (!shouldEnableEq) {
+      try {
+        await _equalizer.setEnabled(false);
+      } catch (_) {}
+      await _updateHeadroomGain();
+      return;
+    }
+
+    // 3. Before an Android audio session is created or bound, persist desired enabled flag on AudioEffect without blocking on .parameters
+    if (_player.androidAudioSessionId == null || _player.androidAudioSessionId == 0) {
+      try {
+        await _equalizer.setEnabled(shouldEnableEq);
+      } catch (_) {}
+      await _updateHeadroomGain();
+      return;
+    }
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+      try {
         await _equalizer.setEnabled(true);
-      }
-      final params = await _equalizer.parameters;
-      final bands = params.bands;
-      final n = bands.length;
-      if (n == 0) return;
-
-      final minDb = params.minDecibels;
-      final maxDb = params.maxDecibels;
-      double clampGain(double g) => g.clamp(minDb, maxDb);
-
-      // Deep, punchy, rich Hearth Bass boost (pure hardware low-shelf harmonics)
-      final bassAdd = _bassBoost * 9.0;
-      final lowMidAdd = _bassBoost * 4.5;
-
-      switch (preset) {
-        case 'Custom':
-          for (int i = 0; i < n; i++) {
-            final baseGain = _customBandGains[i] ?? 0.0;
-            if (i == 0) {
-              await bands[i].setGain(clampGain(baseGain + bassAdd));
-            } else if (i == 1) {
-              await bands[i].setGain(clampGain(baseGain + lowMidAdd));
-            } else {
-              await bands[i].setGain(clampGain(baseGain));
-            }
+        final params = await _equalizer.parameters.timeout(const Duration(seconds: 2));
+        final bands = params.bands;
+        final n = bands.length;
+        if (n == 0) {
+          if (attempt < 4) {
+            await Future<void>.delayed(Duration(milliseconds: 60 * (attempt + 1)));
+            continue;
           }
-          break;
-        case 'Warm Tape':
-          // Subtle analog warmth: smooth low-end, neutral mids, soft treble roll-off
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(1.5 + bassAdd));
-            } else if (i == 1) {
-              await bands[i].setGain(clampGain(0.8 + lowMidAdd));
-            } else if (i == n - 1) {
-              await bands[i].setGain(clampGain(-0.5));
-            } else {
-              await bands[i].setGain(clampGain(0.0));
-            }
-          }
-          break;
-        case 'Lo-Fi':
-          // Warm vinyl mids, rolled-off extreme bass and highs
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(0.0 + bassAdd));
-            } else if (i == 1 || i == 2) {
-              await bands[i].setGain(clampGain(1.5));
-            } else if (i >= n - 2) {
-              await bands[i].setGain(clampGain(-1.0));
-            } else {
-              await bands[i].setGain(clampGain(0.5));
-            }
-          }
-          break;
-        case 'Bass Boost':
-          // Focused low-frequency punch with zero volume blowout
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(3.0 + bassAdd));
-            } else if (i == 1) {
-              await bands[i].setGain(clampGain(1.5 + lowMidAdd));
-            } else {
-              await bands[i].setGain(clampGain(0.0));
-            }
-          }
-          break;
-        case 'Vocal Air':
-          // Clear vocals and upper presence
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(0.0 + bassAdd));
-            } else if (i >= n - 2) {
-              await bands[i].setGain(clampGain(2.0));
-            } else {
-              await bands[i].setGain(clampGain(0.8));
-            }
-          }
-          break;
-        case 'Acoustic':
-          // Clean acoustic resonance
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(1.0 + bassAdd));
-            } else if (i == n - 1) {
-              await bands[i].setGain(clampGain(1.2));
-            } else {
-              await bands[i].setGain(clampGain(0.4));
-            }
-          }
-          break;
-        case 'Vocals Only':
-          await applyIsolationFilter(vocalsOnly: true);
           return;
-        case 'Instruments Only':
-          await applyIsolationFilter(vocalsOnly: false);
-          return;
-        case 'Flat':
-        default:
-          for (int i = 0; i < n; i++) {
-            if (i == 0) {
-              await bands[i].setGain(clampGain(bassAdd));
-            } else if (i == 1) {
-              await bands[i].setGain(clampGain(lowMidAdd));
-            } else {
-              await bands[i].setGain(clampGain(0.0));
-            }
+        }
+
+        final minDb = params.minDecibels;
+        final maxDb = params.maxDecibels;
+        double clampGain(double g) => g.clamp(minDb, maxDb);
+
+        // Deep, punchy, rich Hearth Bass boost (pure hardware low-shelf harmonics)
+        final bassAdd = _bassBoost * 9.0;
+        final lowMidAdd = _bassBoost * 4.5;
+
+        // Read live state fields rather than a stale closure parameter
+        final activePreset = _currentPreset;
+        final lowerPreset = activePreset.toLowerCase().trim();
+
+        final List<double> sixBandTarget;
+        if (_spotifyPresetMap.containsKey(lowerPreset)) {
+          sixBandTarget = _spotifyPresetMap[lowerPreset]!;
+        } else if (activePreset == 'Custom') {
+          sixBandTarget = List<double>.generate(6, (idx) => _userCustomBandGains[idx] ?? 0.0);
+        } else {
+          sixBandTarget = const [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        }
+
+        for (int i = 0; i < n; i++) {
+          final hwFreq = bands[i].centerFrequency;
+          var g = hwFreq > 0
+              ? interpolateSixBandGain(hwFreq, sixBandTarget)
+              : sixBandTarget[((i / (n > 1 ? (n - 1) : 1)) * (sixBandTarget.length - 1))
+                  .round()
+                  .clamp(0, sixBandTarget.length - 1)];
+          if (i == 0) {
+            g += bassAdd;
+          } else if (i == 1) {
+            g += lowMidAdd;
           }
-          break;
+          final finalGain = clampGain(g);
+          _appliedHardwareBandGains[i] = finalGain;
+          await bands[i].setGain(finalGain);
+        }
+
+        await _updateHeadroomGain();
+        debugPrint('[AudioHandler] Equalizer preset "$activePreset" synced cleanly ($n hardware bands, session=${_player.androidAudioSessionId}, forceRebind=$forceRebind)');
+        return;
+      } catch (e) {
+        if (attempt < 4) {
+          await Future<void>.delayed(Duration(milliseconds: 60 * (attempt + 1)));
+        } else {
+          debugPrint('[AudioHandler] _applyDspEffectsNow error: $e');
+        }
       }
-    } catch (e) {
-      debugPrint('Apply preset error: $e');
     }
   }
 
-  /// Hardware DSP Isolation Filter (Acapella / Vocals Only vs Karaoke / Instruments Only)
+
+  /// Legacy stub: removed DSP filter hack
   Future<void> applyIsolationFilter({required bool vocalsOnly}) async {
-    _currentPreset = vocalsOnly ? 'Vocals Only' : 'Instruments Only';
-    try {
-      final params = await _equalizer.parameters;
-      final bands = params.bands;
-      final n = bands.length;
-      if (n == 0) return;
-
-      final minDb = params.minDecibels;
-      final maxDb = params.maxDecibels;
-      double clampGain(double g) => g.clamp(minDb, maxDb);
-
-      if (vocalsOnly) {
-        // Acapella / Vocals Only:
-        // Aggressively mute kick, 808s, bass guitar, and cymbals; isolate voice resonance
-        for (int i = 0; i < n; i++) {
-          final freq = bands[i].centerFrequency;
-          double target;
-          if (freq > 0) {
-            if (freq < 280) {
-              target = minDb; // Extreme cut on sub & bass (-15dB to -20dB)
-            } else if (freq < 600) {
-              target = -2.0;
-            } else if (freq >= 600 && freq <= 3800) {
-              target = 9.5; // Maximum boost on speech formants and lead articulation
-            } else if (freq > 3800 && freq <= 6500) {
-              target = 2.0; // Vocal breath and air
-            } else {
-              target = -12.0; // Cut extreme hi-hats, percussions, and synth noise
-            }
-          } else {
-            // Index-based fallback for standard 5-band EQ
-            if (i == 0) {
-              target = minDb;
-            } else if (i == 1) {
-              target = -3.0;
-            } else if (i == 2) {
-              target = 9.5;
-            } else if (i == 3) {
-              target = 3.0;
-            } else {
-              target = -12.0;
-            }
-          }
-          await bands[i].setGain(clampGain(target));
-        }
-      } else {
-        // Karaoke / Instruments Only:
-        // Deep parametric notch carving out vocal formants (1kHz-3.5kHz);
-        // Boost low-end bass and high-end air to psychoacoustically mask any vocal residual bleed
-        for (int i = 0; i < n; i++) {
-          final freq = bands[i].centerFrequency;
-          double target;
-          if (freq > 0) {
-            if (freq < 300) {
-              target = 6.0; // Heavy kick and bassline to overpower vocal bleed
-            } else if (freq >= 650 && freq <= 3600) {
-              target = minDb; // Deepest possible hardware notch attenuation (-15dB to -20dB)
-            } else if (freq > 3600 && freq <= 8000) {
-              target = 4.5; // Preserve guitars, synthesizers, brass
-            } else {
-              target = 5.5; // Sparkle, hi-hats, drum cymbals
-            }
-          } else {
-            // Index-based fallback for standard 5-band EQ
-            if (i == 0) {
-              target = 6.0;
-            } else if (i == 1) {
-              target = 1.5;
-            } else if (i == 2) {
-              target = minDb;
-            } else if (i == 3) {
-              target = 4.0;
-            } else {
-              target = 5.5;
-            }
-          }
-          await bands[i].setGain(clampGain(target));
-        }
-      }
-    } catch (e) {
-      debugPrint('Apply isolation filter error: $e');
-    }
+    // No-op: Removed DSP filter manipulation
   }
 
   /// Seamlessly swaps the active audio stream to [newStreamUrl] (e.g. between Original,
@@ -1144,16 +1283,22 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     required Duration currentPosition,
     required bool playImmediately,
     bool isLocal = false,
+    List<String> fallbackUrls = const [],
+    String? originalStreamUrl,
   }) async {
-    if (newStreamUrl.isEmpty) {
-      LogService.w('AudioHandler', 'swapAudioStream: received empty newStreamUrl');
+    final candidateUrls = <String>[newStreamUrl, ...fallbackUrls]
+        .where((u) => u.trim().isNotEmpty)
+        .toList();
+
+    if (candidateUrls.isEmpty) {
+      LogService.w('AudioHandler', 'swapAudioStream: received empty newStreamUrl and fallbacks');
       return false;
     }
 
     // If already playing this exact stream, maintain continuity
-    if (_activeStreamUrl == newStreamUrl) {
+    if (_activeStreamUrl == candidateUrls.first) {
       if (playImmediately && !_player.playing) {
-        await _player.play();
+        _triggerPlayNonBlocking();
       }
       return true;
     }
@@ -1164,10 +1309,29 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     final bool wasPlaying = _player.playing;
     final bool shouldPlay = playImmediately || wasPlaying;
     final Duration targetPosition = currentPosition;
+    final String previousActiveStreamUrl = _activeStreamUrl ?? '';
+
+    // If seeking mid-stream (targetPosition > 0), prioritize progressive MP4 streams
+    // over WebM streams (which lack front-loaded Cues and crash ExoPlayer with Source error)
+    if (targetPosition > Duration.zero) {
+      candidateUrls.sort((a, b) {
+        final aIsMp4 = a.contains('mime=audio%2Fmp4') ||
+            a.contains('itag=140') ||
+            a.contains('itag=18') ||
+            a.endsWith('.mp4');
+        final bIsMp4 = b.contains('mime=audio%2Fmp4') ||
+            b.contains('itag=140') ||
+            b.contains('itag=18') ||
+            b.endsWith('.mp4');
+        if (aIsMp4 && !bIsMp4) return -1;
+        if (!aIsMp4 && bIsMp4) return 1;
+        return 0;
+      });
+    }
 
     LogService.stream(
       'AudioHandler',
-      'Seamlessly swapping audio stream to "$newStreamUrl" at ${targetPosition.inSeconds}s (playImmediately: $shouldPlay)...',
+      'Seamlessly swapping audio stream to "${candidateUrls.first}" at ${targetPosition.inSeconds}s (playImmediately: $shouldPlay, candidates: ${candidateUrls.length})...',
     );
 
     // 1. Arm completion and auto-advance guards
@@ -1198,33 +1362,54 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       ),
     );
 
-    try {
-      final isLocalFile = isLocal ||
-          newStreamUrl.startsWith('/') ||
-          newStreamUrl.startsWith('file://') ||
-          RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(newStreamUrl);
+    String? successfulUrl;
+    dynamic lastError;
+    StackTrace? lastStackTrace;
 
-      final isYouTubeStream = newStreamUrl.contains('googlevideo.com') ||
-          newStreamUrl.contains('youtube.com');
-      final headers = isYouTubeStream ? _youtubeHeaders : _proxyHeaders;
-
-      // 3. Switch audio source directly without calling _player.stop()
-      if (isLocalFile) {
-        final localPath = _resolveFilePath(newStreamUrl);
-        await _player.setFilePath(
-          localPath,
-          initialPosition: targetPosition,
-          preload: false,
-        ).timeout(const Duration(seconds: 12));
-      } else {
-        await _player.setUrl(
-          newStreamUrl,
-          headers: headers,
-          initialPosition: targetPosition,
-          preload: false,
-        ).timeout(const Duration(seconds: 12));
+    for (final candidateUrl in candidateUrls) {
+      if (currentRequestId != _swapRequestId) {
+        debugPrint('[AudioHandler] swapAudioStream #$currentRequestId superseded by #$_swapRequestId');
+        _isSwappingStream = false;
+        return false;
       }
 
+      try {
+        final isLocalFile = isLocal ||
+            candidateUrl.startsWith('/') ||
+            candidateUrl.startsWith('file://') ||
+            RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(candidateUrl);
+
+        final isYouTubeStream = candidateUrl.contains('googlevideo.com') ||
+            candidateUrl.contains('youtube.com');
+        final headers = isYouTubeStream ? _youtubeHeaders : _proxyHeaders;
+
+        // 3. Switch audio source directly without calling _player.stop()
+        if (isLocalFile) {
+          final localPath = _resolveFilePath(candidateUrl);
+          await _player.setFilePath(
+            localPath,
+            initialPosition: targetPosition,
+            preload: true,
+          ).timeout(const Duration(seconds: 10));
+        } else {
+          await _player.setUrl(
+            candidateUrl,
+            headers: headers,
+            initialPosition: targetPosition,
+            preload: true,
+          ).timeout(const Duration(seconds: 10));
+        }
+
+        successfulUrl = candidateUrl;
+        break; // Successfully loaded candidate!
+      } catch (e, st) {
+        lastError = e;
+        lastStackTrace = st;
+        LogService.w('AudioHandler', 'Candidate stream failed in swapAudioStream: $e');
+      }
+    }
+
+    if (successfulUrl != null) {
       // Check if superseded by rapid subsequent toggles
       if (currentRequestId != _swapRequestId) {
         debugPrint('[AudioHandler] swapAudioStream #$currentRequestId superseded by #$_swapRequestId');
@@ -1232,15 +1417,15 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       }
 
       // 4. Restore playback parameters (speed, repeat mode, DSP equalizer)
-      await _restorePlaybackParameters();
+      await _restorePlaybackParameters(forceRebindEq: false);
 
-      // 5. Resume playback if requested or if previously playing
+      // 5. Resume playback without blocking on just_audio's track-end play() Future
       if (shouldPlay) {
-        await _player.play();
+        _triggerPlayNonBlocking();
       }
 
-      // 6. Update tracking state & disarm guards
-      _activeStreamUrl = newStreamUrl;
+      // 6. Update tracking state & disarm guards immediately
+      _activeStreamUrl = successfulUrl;
       _lastKnownPosition = targetPosition;
       _currentTrackActive = true;
       _completionHandled = false;
@@ -1252,16 +1437,55 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         'Successfully swapped audio stream! Playing at ${targetPosition.inSeconds}s (speed: ${_activeSpeed}x)',
       );
       return true;
-    } catch (e, st) {
-      if (currentRequestId != _swapRequestId) {
-        // Silently ignore superseded or aborted requests
-        return false;
-      }
-      LogService.w('AudioHandler', 'swapAudioStream failed: $e\n$st');
-      _isSwappingStream = false;
-      _completionHandled = false;
+    }
+
+    // AUTO-RECOVERY: All candidates failed! Restore previous active stream immediately so ExoPlayer doesn't crash or stay silent
+    if (currentRequestId != _swapRequestId) {
       return false;
     }
+    LogService.w('AudioHandler', 'swapAudioStream all candidates failed: $lastError\n$lastStackTrace');
+
+    final recoveryUrl = (originalStreamUrl != null && originalStreamUrl.isNotEmpty)
+        ? originalStreamUrl
+        : (previousActiveStreamUrl.isNotEmpty ? previousActiveStreamUrl : null);
+
+    if (recoveryUrl != null) {
+      try {
+        LogService.stream('AudioHandler', 'Auto-recovering previous audio stream: $recoveryUrl');
+        final isLocalRec = recoveryUrl.startsWith('/') ||
+            recoveryUrl.startsWith('file://') ||
+            RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(recoveryUrl);
+        if (isLocalRec) {
+          await _player.setFilePath(
+            _resolveFilePath(recoveryUrl),
+            initialPosition: targetPosition,
+            preload: true,
+          ).timeout(const Duration(seconds: 8));
+        } else {
+          final recHeaders = (recoveryUrl.contains('googlevideo.com') || recoveryUrl.contains('youtube.com'))
+              ? _youtubeHeaders
+              : _proxyHeaders;
+          await _player.setUrl(
+            recoveryUrl,
+            headers: recHeaders,
+            initialPosition: targetPosition,
+            preload: true,
+          ).timeout(const Duration(seconds: 8));
+        }
+        await _restorePlaybackParameters();
+        if (shouldPlay) {
+          _triggerPlayNonBlocking();
+        }
+        _activeStreamUrl = recoveryUrl;
+        _currentTrackActive = true;
+      } catch (recErr) {
+        LogService.w('AudioHandler', 'Stream auto-recovery failed: $recErr');
+      }
+    }
+
+    _isSwappingStream = false;
+    _completionHandled = false;
+    return false;
   }
 
   @override
@@ -1279,10 +1503,18 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    // Restore hardware DSP equalizer, bass boost, and headroom BEFORE starting non-blocking play
+    await _restorePlaybackParameters();
+    _triggerPlayNonBlocking();
+    _syncWidget();
+  }
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() async {
+    await _player.pause();
+    _syncWidget();
+  }
 
   @override
   Future<void> seek(Duration position) async {
@@ -1296,12 +1528,102 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   double _activeSpeed = 1.0;
+  double _activePitch = 1.0;
+  double _normalizationGain = 1.0;
+  double _sleepFadeMultiplier = 1.0;
+
+  double get activePitch => _activePitch;
+  double get normalizationGain => _normalizationGain;
+  double get sleepFadeMultiplier => _sleepFadeMultiplier;
   String _activeRepeatMode = 'off';
 
   @override
   Future<void> setSpeed(double speed) async {
-    _activeSpeed = speed;
-    await _player.setSpeed(speed);
+    _activeSpeed = speed.clamp(0.25, 3.0);
+    await _player.setSpeed(_activeSpeed);
+    await _scheduleDspSync(forceRebind: false);
+    await _updateHeadroomGain();
+  }
+
+  Future<void> setPitch(double pitch) async {
+    _activePitch = pitch.clamp(0.5, 2.0);
+    try {
+      await _player.setPitch(_activePitch).catchError((_) {});
+    } catch (_) {}
+    await _scheduleDspSync(forceRebind: false);
+    await _updateHeadroomGain();
+  }
+
+  Future<void> setNormalizationGain(double gain) async {
+    _normalizationGain = gain.clamp(0.2, 1.0);
+    await _updateHeadroomGain();
+  }
+
+  Future<void> setSleepFadeMultiplier(double multiplier) async {
+    _sleepFadeMultiplier = multiplier.clamp(0.0, 1.0);
+    await _updateHeadroomGain();
+  }
+
+  Future<void> resetSleepFade() async {
+    _sleepFadeMultiplier = 1.0;
+    await _updateHeadroomGain();
+  }
+
+  bool _loudnessNormalizationEnabled = true;
+  bool get loudnessNormalizationEnabled => _loudnessNormalizationEnabled;
+  Future<void> setLoudnessNormalizationEnabled(bool enabled) async {
+    _loudnessNormalizationEnabled = enabled;
+    _normalizationGain = enabled ? 0.92 : 1.0;
+    await _updateHeadroomGain();
+    await _scheduleDspSync(forceRebind: false);
+  }
+
+  bool _skipSilenceEnabled = false;
+  bool get skipSilenceEnabled => _skipSilenceEnabled;
+  Future<void> setSkipSilenceEnabled(bool enabled) async {
+    _skipSilenceEnabled = enabled;
+    try {
+      await _player.setSkipSilenceEnabled(enabled);
+    } catch (_) {}
+  }
+
+  double _bassExciter = 0.0;
+  double get bassExciter => _bassExciter;
+  Future<void> setBassExciter(double val) async {
+    _bassExciter = val.clamp(0.0, 1.0);
+    await _scheduleDspSync(forceRebind: false);
+  }
+
+  double _spatializer = 0.0;
+  double get spatializer => _spatializer;
+  Future<void> setSpatializer(double val) async {
+    _spatializer = val.clamp(0.0, 1.0);
+    await _scheduleDspSync(forceRebind: false);
+  }
+
+  int _crossfadeSeconds = 0;
+  bool _gaplessPlayback = true;
+  bool get gaplessPlayback => _gaplessPlayback;
+
+  Future<void> setCrossfadeSeconds(int seconds) async {
+    _crossfadeSeconds = seconds.clamp(0, 12);
+  }
+
+  Future<void> setGaplessPlayback(bool enabled) async {
+    _gaplessPlayback = enabled;
+  }
+
+  Future<void> updateSongMediaItem(Song song) async {
+    final current = mediaItem.value;
+    if (current != null && current.id == song.id) {
+      mediaItem.add(
+        current.copyWith(
+          title: song.title,
+          artist: song.artist,
+          artUri: song.artworkUrl.isNotEmpty ? Uri.tryParse(song.artworkUrl) : current.artUri,
+        ),
+      );
+    }
   }
 
   @override
@@ -1333,21 +1655,24 @@ class SineAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     playbackState.add(playbackState.value.copyWith(repeatMode: serviceMode));
   }
 
-  /// Re-applies active speed and loop configurations when a new audio source prepares
-  Future<void> _restorePlaybackParameters() async {
+  /// Re-applies active speed, loop, and DSP audio effects when a new audio source prepares
+  Future<void> _restorePlaybackParameters({bool forceRebindEq = false}) async {
     try {
       if (_activeSpeed != 1.0) {
-        await _player.setSpeed(_activeSpeed);
+        await _player.setSpeed(_activeSpeed).catchError((_) {});
       }
-      if (_activeRepeatMode == 'one') {
-        await _player.setLoopMode(LoopMode.one);
-      } else {
-        await _player.setLoopMode(LoopMode.off);
-      }
-      if (_eqEnabled) {
-        await applyEqualizerPreset(_currentPreset);
+      if (_activePitch != 1.0) {
+        await _player.setPitch(_activePitch).catchError((_) {});
       }
     } catch (_) {}
+    try {
+      if (_activeRepeatMode == 'one') {
+        await _player.setLoopMode(LoopMode.one).catchError((_) {});
+      } else {
+        await _player.setLoopMode(LoopMode.off).catchError((_) {});
+      }
+    } catch (_) {}
+    await _scheduleDspSync(forceRebind: forceRebindEq);
   }
 
   @override

@@ -6,28 +6,98 @@ class SponsorSegment {
   final double start;
   final double end;
   final String category;
+  final String actionType;
+  final String uuid;
 
   const SponsorSegment({
     required this.start,
     required this.end,
     required this.category,
+    this.actionType = 'skip',
+    this.uuid = '',
   });
+
+  double get durationSeconds => (end - start).clamp(0.0, double.infinity);
+
+  String get displayLabel {
+    switch (category) {
+      case 'sponsor':
+        return 'Sponsor';
+      case 'selfpromo':
+        return 'Self Promotion';
+      case 'intro':
+        return 'Intro / Intermission';
+      case 'outro':
+        return 'Endcards / Outro';
+      case 'interaction':
+        return 'Interaction Reminder';
+      case 'music_offtopic':
+        return 'Non-Music Section';
+      case 'preview':
+        return 'Preview / Recap';
+      case 'filler':
+        return 'Filler Tangent';
+      default:
+        return 'Sponsor Segment';
+    }
+  }
 }
 
+/// Full SponsorBlock integration powered by https://sponsor.ajay.app/
+/// Supports all 8 customizable categories, segment merging, TTL caching, and skip telemetry.
 class SponsorBlockService {
   static final SponsorBlockService instance = SponsorBlockService._();
   SponsorBlockService._();
 
+  static const List<String> allCategories = [
+    'sponsor',
+    'selfpromo',
+    'intro',
+    'outro',
+    'interaction',
+    'music_offtopic',
+    'preview',
+    'filler',
+  ];
+
+  static const Map<String, String> categoryTitles = {
+    'sponsor': 'Sponsor',
+    'selfpromo': 'Unpaid / Self Promotion',
+    'intro': 'Intermission / Intro Animation',
+    'outro': 'Endcards / Credits',
+    'interaction': 'Subscribe / Like Reminders',
+    'music_offtopic': 'Non-Music Section',
+    'preview': 'Preview / Recap',
+    'filler': 'Filler Tangent / Jokes',
+  };
+
   bool isEnabled = true;
+  Set<String> enabledCategories = {
+    'sponsor',
+    'selfpromo',
+    'intro',
+    'outro',
+    'interaction',
+    'music_offtopic',
+  };
 
   // LRU cache with timestamp for TTL expiration
-  static const int _maxCacheEntries = 100;
+  static const int _maxCacheEntries = 120;
   static const Duration _cacheTtl = Duration(hours: 1);
   final Map<String, (DateTime, List<SponsorSegment>)> _cache = {};
 
   void clearCache() => _cache.clear();
 
   void invalidate(String videoId) => _cache.remove(videoId);
+
+  void configure({
+    required bool enabled,
+    required Set<String> categories,
+  }) {
+    isEnabled = enabled;
+    enabledCategories = Set<String>.from(categories);
+    _cache.clear();
+  }
 
   static List<SponsorSegment> mergeSegments(List<SponsorSegment> raw) {
     if (raw.isEmpty) return [];
@@ -45,6 +115,8 @@ class SponsorBlockService {
           start: current.start,
           end: next.end > current.end ? next.end : current.end,
           category: current.category,
+          actionType: current.actionType,
+          uuid: current.uuid,
         );
       } else {
         merged.add(current);
@@ -63,7 +135,7 @@ class SponsorBlockService {
   }
 
   Future<List<SponsorSegment>> getSkipSegments(String videoId) async {
-    if (!isEnabled || videoId.isEmpty) return [];
+    if (!isEnabled || videoId.isEmpty || enabledCategories.isEmpty) return [];
 
     final cached = _cache[videoId];
     if (cached != null) {
@@ -76,11 +148,11 @@ class SponsorBlockService {
     try {
       final uri = Uri.https('sponsor.ajay.app', '/api/skipSegments', {
         'videoID': videoId,
-        'categories': jsonEncode(['sponsor', 'intro', 'outro', 'selfpromo']),
+        'categories': jsonEncode(enabledCategories.toList()),
       });
 
       final response = await http
-          .get(uri, headers: {'User-Agent': 'Sine/1.0'})
+          .get(uri, headers: {'User-Agent': 'AuraTube/1.0.4'})
           .timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
@@ -100,6 +172,8 @@ class SponsorBlockService {
               start: start,
               end: end,
               category: item['category']?.toString() ?? 'sponsor',
+              actionType: item['actionType']?.toString() ?? 'skip',
+              uuid: item['UUID']?.toString() ?? '',
             ));
           }
 
@@ -108,7 +182,6 @@ class SponsorBlockService {
           return normalized;
         }
       } else if (response.statusCode == 404) {
-        // Video has no sponsor segments: memoize negative hit
         _cacheSegments(videoId, []);
         return [];
       } else if (response.statusCode == 429) {

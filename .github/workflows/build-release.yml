@@ -1,0 +1,77 @@
+name: AuraTube Cloud CI/CD Release Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Analyze, Test & Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run static analysis
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run unit & feature tests
+        run: flutter test
+
+      - name: Build Release APK (No Tree-Shake Icons)
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Determine release version & rename APK
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            PUB_VER=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+            TAG_NAME="v${PUB_VER}"
+          fi
+          APK_NAME="AuraTube-${TAG_NAME}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "${APK_NAME}"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "apk=${APK_NAME}" >> "$GITHUB_OUTPUT"
+          ls -lh "${APK_NAME}"
+
+      - name: Upload APK build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.apk }}
+          path: ${{ steps.version.outputs.apk }}
+
+      - name: Publish GitHub Release on Tag Push
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "AuraTube ${{ steps.version.outputs.tag }} — Production Monochrome Edition"
+          generate_release_notes: true
+          files: ${{ steps.version.outputs.apk }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

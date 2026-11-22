@@ -1,8 +1,8 @@
 name: new_youtube
-description: "AuraTube: High-fidelity YouTube client powered by Sine & NewPipe architecture with hardware DSP Equalizer."
+description: "AuraTube: Production-level monochromatic YouTube Video & Music client integrating NewPipe, Metrolist, Audile, BetterLyrics, SponsorBlock, Zemer-Cipher, YoutubeExplode, just_audio, audio_service & Sine."
 publish_to: 'none'
 
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ^3.11.1
@@ -14,7 +14,7 @@ dependencies:
   font_awesome_flutter: ^11.0.0
   youtube_explode_dart: ^3.1.0
   video_player: ^2.9.2
-  just_audio: ^0.9.44
+  just_audio: ^0.10.5
   audio_service: ^0.18.18
   audio_session: ^0.1.25
   audio_video_progress_bar: ^2.0.1
@@ -27,6 +27,12 @@ dependencies:
   url_launcher: ^6.2.5
   permission_handler: ^11.3.1
   intl: ^0.20.2
+  crypto: ^3.0.3
+  record: ^6.2.1
+
+dependency_overrides:
+  just_audio:
+    path: packages/just_audio
 
 dev_dependencies:
   flutter_test:

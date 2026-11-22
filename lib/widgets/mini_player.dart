@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../providers/player_provider.dart';
 import '../screens/aura_video_player_screen.dart';
+import '../screens/now_playing_screen.dart';
 import '../theme/ember_theme.dart';
 
 typedef AuraMiniPlayer = MiniPlayer;
 
+/// Production-Level Anchored Monochromatic MiniPlayer (NewPipe + Metrolist Style)
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
@@ -20,13 +23,17 @@ class MiniPlayer extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    final cleanId = song.id.startsWith('yt_') ? song.id.substring(3) : song.id;
     final double progress = player.duration.inMilliseconds > 0
         ? (player.position.inMilliseconds / player.duration.inMilliseconds).clamp(0.0, 1.0)
         : 0.0;
 
     return GestureDetector(
       onLongPress: () {
-        player.stopPlayback();
+        HapticFeedback.mediumImpact();
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NowPlayingScreen()),
+        );
       },
       onHorizontalDragEnd: (details) {
         if (details.primaryVelocity != null) {
@@ -52,69 +59,59 @@ class MiniPlayer extends StatelessWidget {
         );
       },
       child: Container(
-        margin: EdgeInsets.zero,
         decoration: BoxDecoration(
           color: EmberColors.surfaceContainerLow.withValues(alpha: 0.98),
-          border: Border(
-            top: BorderSide(color: EmberColors.primaryBlue.withValues(alpha: 0.35), width: 1.0),
+          border: const Border(
+            top: BorderSide(color: EmberColors.outlineVariant, width: 1.0),
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.6),
-              blurRadius: 16,
-              offset: const Offset(0, -3),
+              color: Colors.black.withValues(alpha: 0.75),
+              blurRadius: 18,
+              offset: const Offset(0, -4),
             ),
           ],
         ),
-        clipBehavior: Clip.antiAlias,
         child: SafeArea(
           top: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Electric Blue Progress Indicator
+              // Stark White Precision Progress Line
               LinearProgressIndicator(
                 value: progress,
-                minHeight: 2.5,
-                backgroundColor: Colors.white.withValues(alpha: 0.08),
-                valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.primaryBlue),
+                minHeight: 2.0,
+                backgroundColor: EmberColors.surfaceContainerHigh,
+                valueColor: const AlwaysStoppedAnimation<Color>(EmberColors.monoWhite),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Row(
                   children: [
-                    // 16:9 Mini Thumbnail with Play Overlay
+                    // 16:9 Mini Thumbnail
                     ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(7),
                       child: SizedBox(
-                        width: 56,
+                        width: 54,
                         height: 34,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CachedNetworkImage(
-                              imageUrl: song.artworkUrl.isNotEmpty
-                                  ? song.artworkUrl
-                                  : 'https://i.ytimg.com/vi/${song.id}/hqdefault.jpg',
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) => Container(color: EmberColors.surfaceContainer),
-                              errorWidget: (context, url, error) => Container(
-                                color: EmberColors.surfaceContainer,
-                                child: const Center(
-                                  child: FaIcon(FontAwesomeIcons.youtube, size: 14, color: EmberColors.primaryBlue),
-                                ),
-                              ),
+                        child: CachedNetworkImage(
+                          imageUrl: song.artworkUrl.isNotEmpty
+                              ? song.artworkUrl
+                              : 'https://i.ytimg.com/vi/$cleanId/hqdefault.jpg',
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(color: EmberColors.surfaceContainer),
+                          errorWidget: (context, url, error) => Container(
+                            color: EmberColors.surfaceContainer,
+                            child: const Center(
+                              child: FaIcon(FontAwesomeIcons.music, size: 12, color: EmberColors.monoSilver),
                             ),
-                            Container(
-                              color: Colors.black.withValues(alpha: 0.25),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 12),
 
-                    // Title and Channel Name
+                    // Title & Metadata
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,24 +124,26 @@ class MiniPlayer extends StatelessWidget {
                             style: const TextStyle(
                               color: EmberColors.textPrimary,
                               fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.1,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                                 decoration: BoxDecoration(
-                                  color: EmberColors.primaryBlue.withValues(alpha: 0.2),
+                                  color: EmberColors.monoWhite,
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: const Text(
-                                  'AUDIO MODE',
+                                  'AUDIO',
                                   style: TextStyle(
-                                    color: EmberColors.secondaryCyan,
-                                    fontSize: 8.5,
-                                    fontWeight: FontWeight.bold,
+                                    color: EmberColors.onAccent,
+                                    fontSize: 8.0,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.4,
                                   ),
                                 ),
                               ),
@@ -166,15 +165,16 @@ class MiniPlayer extends StatelessWidget {
                       ),
                     ),
 
-                    // Controls
+                    // Play / Pause
                     IconButton(
-                      iconSize: 20,
+                      visualDensity: VisualDensity.compact,
                       icon: FaIcon(
                         player.isPlaying ? FontAwesomeIcons.pause : FontAwesomeIcons.play,
-                        color: EmberColors.textPrimary,
-                        size: 16,
+                        color: EmberColors.monoWhite,
+                        size: 15,
                       ),
                       onPressed: () {
+                        HapticFeedback.selectionClick();
                         if (player.isPlaying) {
                           player.pause();
                         } else {
@@ -182,14 +182,29 @@ class MiniPlayer extends StatelessWidget {
                         }
                       },
                     ),
+                    // Next Track
                     IconButton(
-                      iconSize: 18,
+                      visualDensity: VisualDensity.compact,
+                      icon: const FaIcon(
+                        FontAwesomeIcons.forwardStep,
+                        color: EmberColors.textSecondary,
+                        size: 14,
+                      ),
+                      onPressed: () {
+                        HapticFeedback.selectionClick();
+                        player.skipNext();
+                      },
+                    ),
+                    // Close
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
                       icon: const FaIcon(
                         FontAwesomeIcons.xmark,
                         color: EmberColors.textMuted,
-                        size: 15,
+                        size: 14,
                       ),
                       onPressed: () {
+                        HapticFeedback.selectionClick();
                         player.stopPlayback();
                       },
                     ),

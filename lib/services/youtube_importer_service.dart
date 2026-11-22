@@ -6,6 +6,7 @@ import '../models/song.dart';
 import '../models/playlist.dart';
 import 'piped_service.dart';
 import 'log_service.dart';
+import 'youtube_cipher_service.dart';
 
 enum YouTubeImportType { video, playlist, unknown }
 
@@ -249,9 +250,12 @@ class YouTubeImporterService {
         }
 
         if (candidates.isNotEmpty) {
-          LogService.stream('YouTubeEngine', 'InnerTube resolved ${candidates.length} candidate(s) via $clientName for $cleanId');
-          _cacheStreams(cleanId, candidates);
-          return candidates;
+          final unthrottled = await Future.wait(
+            candidates.map((c) => YouTubeCipherService.unthrottleUrl(c)),
+          );
+          LogService.stream('YouTubeEngine', 'InnerTube resolved ${unthrottled.length} unthrottled candidate(s) via $clientName for $cleanId');
+          _cacheStreams(cleanId, unthrottled);
+          return unthrottled;
         }
       } catch (e) {
         LogService.w('YouTubeEngine', 'InnerTube attempt failed for $cleanId: $e');
