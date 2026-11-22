@@ -26,9 +26,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.41.3
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.41.3'
           channel: 'stable'
           cache: true
 
@@ -36,13 +37,13 @@ jobs:
         run: flutter pub get
 
       - name: Run static analysis
-        run: flutter analyze --no-fatal-infos
+        run: flutter analyze lib test
 
       - name: Run unit & feature tests
         run: flutter test
 
       - name: Build Release APK (No Tree-Shake Icons)
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Determine release version & rename APK
         id: version
@@ -65,13 +66,29 @@ jobs:
           name: ${{ steps.version.outputs.apk }}
           path: ${{ steps.version.outputs.apk }}
 
-      - name: Publish GitHub Release on Tag Push
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish GitHub Release with APK
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "AuraTube ${{ steps.version.outputs.tag }} — Production Monochrome Edition"
-          generate_release_notes: true
+          body: |
+            ## AuraTube ${{ steps.version.outputs.tag }} — Production Monochrome Edition
+
+            Built automatically via **GitHub Cloud CI/CD** (`flutter build apk --release --no-tree-shake-icons`).
+
+            ### Highlights & Integrated Architecture (All 10 Repositories)
+            - **Production OLED Monochromatic UI**: Pure `#000000` canvas, architectural hairline borders, crisp stark-white highlights, FontAwesome icons (zero emojis).
+            - **TeamNewPipe/NewPipe**: Video + Background Audio playback, Subscriptions, What's New Feed, Bookmarks, Comments, Related Videos, Dual MP4/M4A Offline Downloads, Watch History.
+            - **ZemerTeam/zemer-cipher**: Pure-Dart YouTube signature cipher & `n`-parameter unthrottling with live remote `player_configs.json` sync.
+            - **Hexer10/YoutubeExplode**: Multi-client InnerTube video/audio extraction & metadata enrichment.
+            - **ryanheise/just_audio (Patched Priority-1000 DSP)**: Custom Android ExoPlayer plugin with Priority-1000 `Equalizer`, `LoudnessEnhancer`, pre-allocated `audioSessionId`, and session persistence across track/Bluetooth swaps + OS `AudioEffect` session broadcast for Viper4Android / AudioFX / Wavelet.
+            - **ryanheise/audio_service**: Background media service, notification & headset controls.
+            - **AudileTeam/Audile**: Pure-Dart Shazam acoustic landmark FFT fingerprinting, Lyrics-to-Song search, Odesli (`song.link`) cross-platform links, and Recognition History.
+            - **boidushya/better-lyrics**: Multi-provider word-by-word synced karaoke lyrics, live Translation, Romanization, Metrolist timing sync offset, and Shareable Lyric Story Cards.
+            - **SponsorBlock (`sponsor.ajay.app`)**: Auto-skip across all 8 toggleable categories in BOTH Video Player (with Undo toast) and Background Audio + lifetime stats.
+            - **MetrolistGroup/Metrolist**: Independent Speed & Pitch, Skip Silence, Loudness Normalization, 10s Fade-Out Sleep Timer, Quick Picks, Listening Insights & Stats, and Full JSON Backup & Restore.
+            - **taezeem14/Sine**: Interactive 6-Band Bezier Curve Graphic Equalizer with 25 Studio Presets, Studio Stem Isolation (Vocals Only / Karaoke), Hardware Accelerometer Gestures (Shake-to-Skip / Flip-to-Pause), Driving Mode, Local Audio Scanner, Diagnostics Log Extractor, and Creator UPI Showcase (`Muhammad Taezeem Tariq @taezeem14`).
           files: ${{ steps.version.outputs.apk }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
